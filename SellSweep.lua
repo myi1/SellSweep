@@ -135,6 +135,162 @@ local function KeepList()
   if not any then Print("Keep-list is empty. /sweep keep [shift-click an item into chat] to protect it.") end
 end
 
+-- ---------------------------------------------------------- config panel
+
+local panel, rows = nil, {}
+
+local function RefreshPanel()
+  if not panel or not DB then return end
+  for q = 0, 4 do panel.quality[q]:SetChecked(DB.qualities[q]) end
+  panel.auto:SetChecked(DB.autoSell)
+  panel.cons:SetChecked(DB.protectConsumables)
+
+  local items = {}
+  for id, name in pairs(DB.keep) do items[#items+1] = { id = id, name = name } end
+  table.sort(items, function(a, b) return tostring(a.name) < tostring(b.name) end)
+  local y = 0
+  for i, it in ipairs(items) do
+    local row = rows[i]
+    if not row then
+      row = CreateFrame("Frame", nil, panel.listContent)
+      row:SetWidth(206); row:SetHeight(19)
+      row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      row.text:SetPoint("LEFT", row, "LEFT", 2, 0)
+      row.text:SetWidth(176); row.text:SetJustifyH("LEFT")
+      row.del = CreateFrame("Button", nil, row, "UIPanelCloseButton")
+      row.del:SetWidth(20); row.del:SetHeight(20)
+      row.del:SetPoint("RIGHT", row, "RIGHT", 2, 0)
+      rows[i] = row
+    end
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", panel.listContent, "TOPLEFT", 0, -y)
+    row.text:SetText(tostring(it.name))
+    row.del:SetScript("OnClick", function()
+      DB.keep[it.id] = nil
+      RefreshPanel()
+    end)
+    row:Show()
+    y = y + 19
+  end
+  for i = #items + 1, #rows do rows[i]:Hide() end
+  panel.listContent:SetHeight(math.max(y, 10))
+  if #items == 0 then panel.empty:Show() else panel.empty:Hide() end
+end
+
+local function MakeCheck(name, label, onclick)
+  local cb = CreateFrame("CheckButton", name, panel, "UICheckButtonTemplate")
+  cb:SetWidth(24); cb:SetHeight(24)
+  _G[name .. "Text"]:SetText(label)
+  cb:SetScript("OnClick", function(self)
+    onclick(self:GetChecked() and true or false)
+    RefreshPanel()
+  end)
+  return cb
+end
+
+function SS.OpenConfig()
+  if panel then
+    if panel:IsShown() then panel:Hide() else RefreshPanel(); panel:Show() end
+    return
+  end
+  panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
+  panel:SetWidth(260); panel:SetHeight(470)
+  panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
+  panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
+  panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
+  panel:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
+  panel:SetBackdrop({
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 28,
+    insets = { left = 8, right = 8, top = 8, bottom = 8 } })
+  panel:SetFrameStrata("DIALOG")
+
+  local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("TOP", panel, "TOP", 0, -14)
+  title:SetText("|cff58c9a8SellSweep|r")
+
+  local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+  close:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -6, -6)
+
+  local qLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  qLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -42)
+  qLabel:SetText("Sell these qualities:")
+
+  panel.quality = {}
+  local y = -62
+  for q = 0, 4 do
+    local cb = MakeCheck("SellSweepCBQ" .. q,
+      QUALITY_COLOR[q] .. string.upper(string.sub(QUALITY_NAME[q],1,1)) ..
+      string.sub(QUALITY_NAME[q],2) .. "|r",
+      function(v) DB.qualities[q] = v end)
+    cb:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y)
+    panel.quality[q] = cb
+    y = y - 24
+  end
+
+  panel.cons = MakeCheck("SellSweepCBCons", "Protect consumables (potions etc.)",
+    function(v) DB.protectConsumables = v end)
+  panel.cons:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 6)
+  panel.auto = MakeCheck("SellSweepCBAuto", "Auto-sell when a merchant opens",
+    function(v) DB.autoSell = v end)
+  panel.auto:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 30)
+
+  local kLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  kLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y - 64)
+  kLabel:SetText("Keep-list (never sold):")
+
+  local scroll = CreateFrame("ScrollFrame", "SellSweepKeepScroll", panel, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 22, y - 82)
+  scroll:SetWidth(200); scroll:SetHeight(120)
+  panel.listContent = CreateFrame("Frame", nil, scroll)
+  panel.listContent:SetWidth(200); panel.listContent:SetHeight(10)
+  scroll:SetScrollChild(panel.listContent)
+
+  panel.empty = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  panel.empty:SetPoint("TOPLEFT", scroll, "TOPLEFT", 4, -4)
+  panel.empty:SetText("(empty)")
+
+  local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  hint:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 22, 52)
+  hint:SetWidth(216); hint:SetJustifyH("LEFT")
+  hint:SetText("Shift-click an item into the box, then Add:")
+
+  panel.edit = CreateFrame("EditBox", "SellSweepKeepEdit", panel, "InputBoxTemplate")
+  panel.edit:SetWidth(150); panel.edit:SetHeight(20)
+  panel.edit:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 28, 24)
+  panel.edit:SetAutoFocus(false)
+  panel.edit:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
+
+  local add = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  add:SetWidth(50); add:SetHeight(21)
+  add:SetPoint("LEFT", panel.edit, "RIGHT", 8, 0)
+  add:SetText("Add")
+  add:SetScript("OnClick", function()
+    local id = ItemIdFromLink(panel.edit:GetText())
+    if id then
+      DB.keep[id] = GetItemInfo(id) or ("item " .. id)
+      panel.edit:SetText("")
+      RefreshPanel()
+    else
+      Print("Shift-click an item into the box first.")
+    end
+  end)
+
+  -- Route shift-clicked item links into our box while it has focus.
+  local origInsert = ChatEdit_InsertLink
+  ChatEdit_InsertLink = function(link)
+    if panel and panel.edit and panel.edit:HasFocus() then
+      panel.edit:SetText(link or "")
+      return true
+    end
+    return origInsert(link)
+  end
+
+  RefreshPanel()
+  panel:Show()
+end
+
 -- Merchant button + auto-sell.
 local btn
 local ev = CreateFrame("Frame")
@@ -169,6 +325,19 @@ ev:SetScript("OnEvent", function(_, event, name)
         GameTooltip:Show()
       end)
       btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+      local cfg = CreateFrame("Button", "SellSweepCfgButton", MerchantFrame, "UIPanelButtonTemplate")
+      cfg:SetWidth(36); cfg:SetHeight(21)
+      cfg:SetPoint("RIGHT", btn, "LEFT", -4, 0)
+      cfg:SetText("Cfg")
+      cfg:SetScript("OnClick", function() SS.OpenConfig() end)
+      cfg:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:AddLine("SellSweep options")
+        GameTooltip:AddLine("Qualities, keep-list, auto-sell", 1, 1, 1)
+        GameTooltip:Show()
+      end)
+      cfg:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
     if DB and DB.autoSell then SS.Sweep() end
   end
@@ -211,6 +380,8 @@ SlashCmdList["SELLSWEEP"] = function(line)
     KeepList()
   elseif cmd == "status" then
     SS.Status()
+  elseif cmd == "config" or cmd == "options" then
+    SS.OpenConfig()
   else
     Print("Commands:")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep - sell now (at a merchant)")
