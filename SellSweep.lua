@@ -1,5 +1,8 @@
 -- SellSweep: quality-configurable vendor sweeping with a protected keep-list.
 -- /sweep at a merchant (or the Sweep button on the merchant frame, or auto).
+-- Smart mode (SmartSweep.lua) additionally sells green/blue gear that is
+-- provably useless: affix already learned (or absent) and not an upgrade.
+-- /sweep preview dry-runs the smart rules without selling anything.
 SellSweep = {}
 local SS = SellSweep
 local DB
@@ -13,6 +16,7 @@ local DEFAULTS = {
   qualities = { [0]=true, [1]=false, [2]=false, [3]=false, [4]=false },
   autoSell = false,
   protectConsumables = true,
+  smartSell = false,  -- smart mode: also sell known-affix non-upgrade greens/blues
   keep = {},   -- [itemID] = item name
 }
 
@@ -36,19 +40,9 @@ local function ItemIdFromLink(link)
   return id and tonumber(id)
 end
 
--- Should this bag item be sold under current settings?
-local function ShouldSell(link, count)
-  local id = ItemIdFromLink(link)
-  if not id then return false end
-  if DB.keep[id] then return false end
-  local name, _, quality, _, _, itemType, _, _, _, _, sellPrice = GetItemInfo(link)
-  if not name then return false end
-  if not sellPrice or sellPrice <= 0 then return false end          -- unsellable
-  if itemType == "Quest" then return false end
-  if DB.protectConsumables and itemType == "Consumable" then return false end
-  if not DB.qualities[quality or -1] then return false end
-  return true, sellPrice * (count or 1)
-end
+-- Shared with SmartSweep.lua (which owns all sell/keep classification).
+SS.ItemIdFromLink = ItemIdFromLink
+SS.Money = Money
 
 -- Staggered seller (dumping 100+ UseContainerItem calls in one frame is flaky).
 local queue, sweptCount, sweptValue = {}, 0, 0
@@ -80,23 +74,26 @@ seller:SetScript("OnUpdate", function(self, e)
   end
 end)
 
-function SS.Sweep()
+-- forceSmart: run this sweep with the smart rules even if the checkbox is off
+-- (/sweep smart). Otherwise DB.smartSell decides.
+function SS.Sweep(forceSmart)
   if not (MerchantFrame and MerchantFrame:IsShown()) then
     Print("Open a merchant first.")
     return
   end
+  if not SS.Classify then
+    Print("SmartSweep.lua failed to load — sweep aborted.")
+    return
+  end
+  local smart = (forceSmart or DB.smartSell) and true or false
   queue, sweptCount, sweptValue = {}, 0, 0
   for bag = 0, 4 do
     for slot = 1, GetContainerNumSlots(bag) do
-      local link = GetContainerItemLink(bag, slot)
-      if link then
-        local _, count = GetContainerItemInfo(bag, slot)
-        local sell, value = ShouldSell(link, count)
-        if sell then
-          queue[#queue+1] = { bag = bag, slot = slot, id = ItemIdFromLink(link) }
-          sweptCount = sweptCount + 1
-          sweptValue = sweptValue + (value or 0)
-        end
+      local v = SS.Classify(bag, slot, smart)
+      if v and v.action == "SELL" then
+        queue[#queue+1] = { bag = bag, slot = slot, id = v.id }
+        sweptCount = sweptCount + 1
+        sweptValue = sweptValue + (v.value or 0)
       end
     end
   end
@@ -104,7 +101,8 @@ function SS.Sweep()
     Print("Nothing to sweep with the current filters (" .. SS.FilterText() .. ").")
     return
   end
-  Print("Sweeping " .. sweptCount .. " items (" .. Money(sweptValue) .. ")…")
+  Print("Sweeping " .. sweptCount .. " items (" .. Money(sweptValue) .. ")"
+    .. (smart and " |cffe0b352[smart]|r" or "") .. "…")
   seller.t = 1  -- start immediately
   seller:Show()
 end
@@ -115,6 +113,7 @@ function SS.FilterText()
     if DB.qualities[q] then on[#on+1] = QUALITY_COLOR[q] .. QUALITY_NAME[q] .. "|r" end
   end
   return (#on > 0 and table.concat(on, "+") or "none")
+    .. (DB.smartSell and " |cffe0b352+smart|r" or "")
     .. (DB.protectConsumables and " |cff58c9a8(consumables protected)|r" or "")
 end
 
@@ -144,6 +143,7 @@ local function RefreshPanel()
   for q = 0, 4 do panel.quality[q]:SetChecked(DB.qualities[q]) end
   panel.auto:SetChecked(DB.autoSell)
   panel.cons:SetChecked(DB.protectConsumables)
+  panel.smart:SetChecked(DB.smartSell)
 
   local items = {}
   for id, name in pairs(DB.keep) do items[#items+1] = { id = id, name = name } end
@@ -194,7 +194,7 @@ function SS.OpenConfig()
     return
   end
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(260); panel:SetHeight(470)
+  panel:SetWidth(260); panel:SetHeight(494)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
@@ -235,13 +235,27 @@ function SS.OpenConfig()
   panel.auto = MakeCheck("SellSweepCBAuto", "Auto-sell when a merchant opens",
     function(v) DB.autoSell = v end)
   panel.auto:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 30)
+  panel.smart = MakeCheck("SellSweepCBSmart", "Smart sell known-affix non-upgrades",
+    function(v) DB.smartSell = v end)
+  panel.smart:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 54)
+  panel.smart:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Smart sell")
+    GameTooltip:AddLine("Also sells green/blue armor+weapons whose affix is"
+      .. " already learned (or absent) AND that beat nothing you wear."
+      .. " Tomes, unlearned affixes, uniques, sets, quest items and the"
+      .. " keep-list are never touched.", 1, 1, 1, true)
+    GameTooltip:AddLine("Run /sweep preview first — it sells nothing.", 0.85, 0.41, 0.29, true)
+    GameTooltip:Show()
+  end)
+  panel.smart:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   local kLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  kLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y - 64)
+  kLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y - 88)
   kLabel:SetText("Keep-list (never sold):")
 
   local scroll = CreateFrame("ScrollFrame", "SellSweepKeepScroll", panel, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 22, y - 82)
+  scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 22, y - 106)
   scroll:SetWidth(200); scroll:SetHeight(120)
   panel.listContent = CreateFrame("Frame", nil, scroll)
   panel.listContent:SetWidth(200); panel.listContent:SetHeight(10)
@@ -309,7 +323,9 @@ ev:SetScript("OnEvent", function(_, event, name)
         end
       end
     end
+    if type(SellSweepDB.scans) ~= "table" then SellSweepDB.scans = {} end
     DB = SellSweepDB
+    SS.db = DB
   elseif event == "MERCHANT_SHOW" then
     if not btn and MerchantFrame then
       btn = CreateFrame("Button", "SellSweepButton", MerchantFrame, "UIPanelButtonTemplate")
@@ -355,6 +371,10 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DB.qualities[q] = not DB.qualities[q]
     Print((DB.qualities[q] and "Now selling " or "No longer selling ")
       .. QUALITY_COLOR[q] .. QUALITY_NAME[q] .. "|r items. Selling: " .. SS.FilterText())
+  elseif cmd == "smart" then
+    SS.Sweep(true)
+  elseif cmd == "preview" then
+    if SS.Preview then SS.Preview() else Print("SmartSweep.lua failed to load.") end
   elseif cmd == "auto" then
     DB.autoSell = not DB.autoSell
     Print("Auto-sell on merchant open: " .. (DB.autoSell and "ON" or "OFF"))
@@ -385,6 +405,8 @@ SlashCmdList["SELLSWEEP"] = function(line)
   else
     Print("Commands:")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep - sell now (at a merchant)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep preview - dry run: SELL/KEEP verdict for every bag item (sells nothing)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep keep [shift-click item] - never sell it (/sweep unkeep, /sweep list)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep potions - toggle consumable protection")
