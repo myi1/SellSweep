@@ -315,10 +315,12 @@ function SS.Classify(bag, slot, smartMode)
   -- Existing behavior: quality toggles.
   if db.qualities[quality or -1] then return sell("quality") end
 
-  -- Smart path: green/blue armor+weapons whose (learned-or-absent) affix and
-  -- stats make them provably useless.
+  -- Smart path: green/blue/epic armor+weapons whose (learned-or-absent)
+  -- affix and stats make them provably useless. Epics included as of v1.2.1
+  -- (field audit 2026-08-25: ilvl-62 epics were immortal); the unlearned-affix
+  -- gate, unique/set checks, and the upgrade verdict still protect keepers.
   if not smartMode then return keep("filtered") end
-  if quality ~= 2 and quality ~= 3 then return keep("filtered") end
+  if quality ~= 2 and quality ~= 3 and quality ~= 4 then return keep("filtered") end
   if itemType ~= "Armor" and itemType ~= "Weapon" then return keep("filtered") end
   if IsUnique(lines) then return keep("unique") end
   if IsSetPiece(lines) then return keep("set") end
