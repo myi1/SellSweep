@@ -153,10 +153,10 @@ local function RefreshPanel()
     local row = rows[i]
     if not row then
       row = CreateFrame("Frame", nil, panel.listContent)
-      row:SetWidth(206); row:SetHeight(19)
+      row:SetWidth(224); row:SetHeight(19)
       row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.text:SetPoint("LEFT", row, "LEFT", 2, 0)
-      row.text:SetWidth(176); row.text:SetJustifyH("LEFT")
+      row.text:SetWidth(196); row.text:SetJustifyH("LEFT")
       row.del = CreateFrame("Button", nil, row, "UIPanelCloseButton")
       row.del:SetWidth(20); row.del:SetHeight(20)
       row.del:SetPoint("RIGHT", row, "RIGHT", 2, 0)
@@ -179,8 +179,11 @@ end
 
 local function MakeCheck(name, label, onclick)
   local cb = CreateFrame("CheckButton", name, panel, "UICheckButtonTemplate")
-  cb:SetWidth(24); cb:SetHeight(24)
-  _G[name .. "Text"]:SetText(label)
+  cb:SetWidth(22); cb:SetHeight(22)
+  local t = _G[name .. "Text"]
+  t:SetFontObject("GameFontHighlightSmall")
+  t:SetText(label)
+  t:SetTextColor(0.86, 0.88, 0.87)
   cb:SetScript("OnClick", function(self)
     onclick(self:GetChecked() and true or false)
     RefreshPanel()
@@ -193,51 +196,71 @@ function SS.OpenConfig()
     if panel:IsShown() then panel:Hide() else RefreshPanel(); panel:Show() end
     return
   end
+  local WHITE8 = "Interface\\Buttons\\WHITE8X8"
+  local TEAL = "|cff58c9a8"
+  -- Quality swatch colors (RGB), so state reads by SHAPE+WORD, not color alone.
+  local SW = { [0] = { 0.62, 0.62, 0.62 }, [1] = { 0.95, 0.95, 0.95 },
+               [2] = { 0.12, 0.90, 0.00 }, [3] = { 0.00, 0.44, 0.87 },
+               [4] = { 0.64, 0.21, 0.93 } }
+
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(260); panel:SetHeight(524)
+  panel:SetWidth(280); panel:SetHeight(500)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
   panel:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
-  panel:SetBackdrop({
-    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-    tile = true, tileSize = 32, edgeSize = 28,
-    insets = { left = 8, right = 8, top = 8, bottom = 8 } })
+  panel:SetBackdrop({ bgFile = WHITE8, edgeFile = WHITE8, edgeSize = 1,
+    insets = { left = 1, right = 1, top = 1, bottom = 1 } })
+  panel:SetBackdropColor(0.09, 0.10, 0.10, 0.97)
+  panel:SetBackdropBorderColor(0.345, 0.788, 0.659, 0.35)
   panel:SetFrameStrata("DIALOG")
 
+  -- Header strip.
+  local hdr = panel:CreateTexture(nil, "ARTWORK")
+  hdr:SetPoint("TOPLEFT", panel, "TOPLEFT", 1, -1)
+  hdr:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1); hdr:SetHeight(34)
+  hdr:SetTexture(0.13, 0.15, 0.15, 1)
+  local hline = panel:CreateTexture(nil, "OVERLAY")
+  hline:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 0, 0)
+  hline:SetPoint("TOPRIGHT", hdr, "BOTTOMRIGHT", 0, 0)
+  hline:SetHeight(1); hline:SetTexture(1, 1, 1, 0.09)
+
   local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  title:SetPoint("TOP", panel, "TOP", 0, -14)
-  title:SetText("|cff58c9a8SellSweep|r")
-
+  title:SetPoint("LEFT", panel, "TOPLEFT", 16, -18)
+  title:SetText(TEAL .. "SellSweep|r")
   local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
-  close:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -6, -6)
+  close:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -4, -4)
 
-  local qLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  qLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, -42)
-  qLabel:SetText("Sell these qualities:")
+  local function section(text, ypos)
+    local f = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    f:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, ypos)
+    f:SetText(text); f:SetTextColor(0.52, 0.57, 0.55)
+  end
 
+  section("SELL QUALITIES", -44)
   panel.quality = {}
   local y = -62
   for q = 0, 4 do
-    local cb = MakeCheck("SellSweepCBQ" .. q,
-      QUALITY_COLOR[q] .. string.upper(string.sub(QUALITY_NAME[q],1,1)) ..
-      string.sub(QUALITY_NAME[q],2) .. "|r",
-      function(v) DB.qualities[q] = v end)
-    cb:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y)
+    local word = string.upper(string.sub(QUALITY_NAME[q], 1, 1)) .. string.sub(QUALITY_NAME[q], 2)
+    local cb = MakeCheck("SellSweepCBQ" .. q, word, function(v) DB.qualities[q] = v end)
+    cb:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
+    local sw = panel:CreateTexture(nil, "OVERLAY")
+    sw:SetWidth(11); sw:SetHeight(11); sw:SetPoint("LEFT", cb, "LEFT", 118, 0)
+    sw:SetTexture(SW[q][1], SW[q][2], SW[q][3], 1)
     panel.quality[q] = cb
-    y = y - 24
+    y = y - 22
   end
 
-  panel.cons = MakeCheck("SellSweepCBCons", "Protect consumables (potions etc.)",
+  section("OPTIONS", y - 6); y = y - 26
+  panel.cons = MakeCheck("SellSweepCBCons", "Protect consumables (potions, food)",
     function(v) DB.protectConsumables = v end)
-  panel.cons:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 6)
+  panel.cons:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y); y = y - 24
   panel.auto = MakeCheck("SellSweepCBAuto", "Auto-sell when a merchant opens",
     function(v) DB.autoSell = v end)
-  panel.auto:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 30)
+  panel.auto:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y); y = y - 24
   panel.smart = MakeCheck("SellSweepCBSmart", "Smart sell known-affix non-upgrades",
     function(v) DB.smartSell = v end)
-  panel.smart:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y - 54)
+  panel.smart:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
   panel.smart:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine("Smart sell")
@@ -249,35 +272,52 @@ function SS.OpenConfig()
     GameTooltip:Show()
   end)
   panel.smart:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  y = y - 32
 
-  local kLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  kLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y - 88)
-  kLabel:SetText("Keep-list (never sold):")
+  section("KEEP-LIST  (never sold)", y); y = y - 20
+
+  -- Primary way to add: the shift-click toggle (accent when active).
+  panel.addBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  panel.addBtn:SetWidth(244); panel.addBtn:SetHeight(22)
+  panel.addBtn:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, y)
+  panel.addBtn:SetText(keepAddMode and "Stop — shift-click to add" or "+  Shift-click items to keep")
+  panel.addBtn:SetScript("OnClick", function() SS.SetKeepAdd(not keepAddMode) end)
+  panel.addBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Shift-click to keep")
+    GameTooltip:AddLine("Turn on, then shift-click items in your bags to add them"
+      .. " to the keep-list (shift-click a kept one to remove it). No box needed.",
+      1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.addBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  y = y - 28
 
   local scroll = CreateFrame("ScrollFrame", "SellSweepKeepScroll", panel, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 22, y - 106)
-  scroll:SetWidth(200); scroll:SetHeight(120)
+  scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, y)
+  scroll:SetWidth(226); scroll:SetHeight(104)
   panel.listContent = CreateFrame("Frame", nil, scroll)
-  panel.listContent:SetWidth(200); panel.listContent:SetHeight(10)
+  panel.listContent:SetWidth(226); panel.listContent:SetHeight(10)
   scroll:SetScrollChild(panel.listContent)
 
   panel.empty = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  panel.empty:SetPoint("TOPLEFT", scroll, "TOPLEFT", 4, -4)
-  panel.empty:SetText("(empty)")
+  panel.empty:SetPoint("TOPLEFT", scroll, "TOPLEFT", 2, -2)
+  panel.empty:SetText("(empty — shift-click bag items above)")
 
+  -- Secondary: paste a shift-clicked link and Add (for chat-link workflows).
   local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  hint:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 22, 52)
-  hint:SetWidth(216); hint:SetJustifyH("LEFT")
-  hint:SetText("Shift-click an item into the box, then Add:")
+  hint:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 46)
+  hint:SetWidth(240); hint:SetJustifyH("LEFT")
+  hint:SetText("…or shift-click a link into this box:")
 
   panel.edit = CreateFrame("EditBox", "SellSweepKeepEdit", panel, "InputBoxTemplate")
-  panel.edit:SetWidth(150); panel.edit:SetHeight(20)
-  panel.edit:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 28, 24)
+  panel.edit:SetWidth(180); panel.edit:SetHeight(20)
+  panel.edit:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 26, 20)
   panel.edit:SetAutoFocus(false)
   panel.edit:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
 
   local add = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  add:SetWidth(50); add:SetHeight(21)
+  add:SetWidth(44); add:SetHeight(21)
   add:SetPoint("LEFT", panel.edit, "RIGHT", 8, 0)
   add:SetText("Add")
   add:SetScript("OnClick", function()
@@ -290,21 +330,6 @@ function SS.OpenConfig()
       Print("Shift-click an item into the box first.")
     end
   end)
-
-  -- Quick-add toggle: shift-click bag items straight into the keep-list.
-  panel.addBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  panel.addBtn:SetWidth(150); panel.addBtn:SetHeight(20)
-  panel.addBtn:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 28, 78)
-  panel.addBtn:SetText(keepAddMode and "Stop shift-click add" or "Shift-click to add")
-  panel.addBtn:SetScript("OnClick", function() SS.SetKeepAdd(not keepAddMode) end)
-  panel.addBtn:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("Shift-click to add")
-    GameTooltip:AddLine("Turn on, then shift-click items in your bags to keep them"
-      .. " (shift-click a kept one to un-keep). No box, no Add button.", 1, 1, 1, true)
-    GameTooltip:Show()
-  end)
-  panel.addBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   -- Route shift-clicked item links into our box while it has focus.
   local origInsert = ChatEdit_InsertLink
@@ -335,7 +360,8 @@ function SS.SetKeepAdd(on)
     Print("Keep-add off.")
   end
   if panel and panel.addBtn then
-    panel.addBtn:SetText(keepAddMode and "Stop shift-click add" or "Shift-click to add")
+    panel.addBtn:SetText(keepAddMode and "Stop — shift-click to add"
+      or "+  Shift-click items to keep")
   end
 end
 
