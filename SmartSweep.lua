@@ -127,32 +127,48 @@ local function HubReadAffix(link)
   return nil
 end
 
--- true = provably learned, false = provably not learned, nil = cannot tell.
--- Mirrors the Hub's own semantics: a learned rank >= the item's rank counts.
-local function HubAffixLearned(name, rank)
+local function IsWeaponAffix(name)
+  local hub = _G.EbonholdHub
+  if not (hub and hub.AffixData and hub.AffixData.IsWeaponAffix) then return false end
+  local ok, w = pcall(hub.AffixData.IsWeaponAffix, name)
+  return ok and w == true
+end
+
+-- Reads the Hub's learned snapshot for one affix by name.
+-- Returns found(bool), best(highest numeric learned rank, 0 if none), rankless(bool).
+-- Returns nil when the Hub can't tell yet (unavailable / server data not loaded).
+local function HubLearnedInfo(name)
   if not name or not HubAvailable() then return nil end
   local hub = _G.EbonholdHub
   local ok, snap = pcall(hub.AffixOwnership.CollectSnapshot)
   if not ok or type(snap) ~= "table" or type(snap.learned) ~= "table" then return nil end
   if next(snap.learned) == nil then return nil end  -- server data not loaded yet
   local e = snap.learned[name]
-  if type(e) ~= "table" then return false end
-  local weapon = false
-  if hub.AffixData.IsWeaponAffix then
-    local okW, w = pcall(hub.AffixData.IsWeaponAffix, name)
-    weapon = okW and w == true
-  end
-  if weapon or not rank then
-    if e.rankless or e.any then return true end
-    if type(e.ranks) == "table" and next(e.ranks) ~= nil then return true end
-    return false
-  end
+  if type(e) ~= "table" then return false, 0, false end
+  local best = 0
   if type(e.ranks) == "table" then
-    if e.ranks[rank] then return true end
     for r in pairs(e.ranks) do
-      if type(r) == "number" and r >= rank then return true end
+      if type(r) == "number" and r > best then best = r end
     end
   end
+  return true, best, (e.rankless == true or e.any == true)
+end
+SS.SmartHubLearnedInfo = HubLearnedInfo
+
+-- true = counts as owned for selling, false = not owned (keep), nil = cannot tell.
+-- Mirrors the Hub's own semantics: for armor, a learned rank >= the item's rank
+-- counts (a lower learned rank is only PARTIAL — the copy still advances you, so
+-- it is kept). anyRank overrides that: once learned at ANY rank, the copy is
+-- vendor trash regardless of its rank.
+local function HubAffixLearned(name, rank, anyRank)
+  local found, best, rankless = HubLearnedInfo(name)
+  if found == nil then return nil end      -- Hub can't tell
+  if found == false then return false end  -- provably never learned at any rank
+  if IsWeaponAffix(name) or not rank or anyRank then
+    if rankless or best > 0 then return true end
+    return false
+  end
+  if best >= rank then return true end
   return false
 end
 
@@ -279,6 +295,12 @@ function SS.Classify(bag, slot, smartMode)
   end
 
   if not name or not id then return keep("no-info") end
+  -- BLACKLIST wins over everything (keep-list, consumable protection, quality
+  -- toggles) — you can only actually vendor items with a sell price.
+  if db.blacklist and db.blacklist[id] then
+    if sellPrice and sellPrice > 0 then return sell("blacklist") end
+    return keep("no-price")
+  end
   if db.keep[id] then return keep("keep-list") end
   if not sellPrice or sellPrice <= 0 then return keep("no-price") end
   if itemType == "Quest" then return keep("quest") end
@@ -312,7 +334,11 @@ function SS.Classify(bag, slot, smartMode)
       v.affix = aName or "?"
       v.affixRank = aRank
       local learned = nil
-      if aName then learned = HubAffixLearned(aName, aRank) end
+      if aName then
+        local _, best = HubLearnedInfo(aName)
+        v.affixLearnedBest = best
+        learned = HubAffixLearned(aName, aRank, db.affixSellAnyRank)
+      end
       if learned == false then return keep("unlearned") end
       if learned == nil then return keep("affix?") end
       v.affixLearned = true
@@ -376,8 +402,8 @@ function SS.Preview()
           quality = v.quality, ilvl = v.ilvl, count = v.count,
           equipLoc = v.equipLoc, action = v.action, reason = v.reason,
           value = v.value, affix = v.affix, affixRank = v.affixRank,
-          affixLearned = v.affixLearned, upgrade = v.upgrade,
-          str = v.str, int = v.int, spi = v.spi,
+          affixLearned = v.affixLearned, affixLearnedBest = v.affixLearnedBest,
+          upgrade = v.upgrade, str = v.str, int = v.int, spi = v.spi,
         }
       end
     end
@@ -396,4 +422,58 @@ function SS.Preview()
   Print(GOLD .. sellN .. R .. " would sell (" .. money .. "), "
     .. BRIGHT .. keepN .. R .. " kept. Full scan saved to SellSweepDB.scans.preview"
     .. DIM .. " (/reload to flush it to disk)." .. R)
+end
+
+-- ------------------------------------------------------------ /sweep affix
+
+-- Per-affix-item readout: shows exactly why each affixed bag item is kept or
+-- sold, with the Hub's learned rank next to the item's rank. Answers "I
+-- extracted this — why isn't it selling?" (usually: learned at a LOWER rank).
+function SS.AffixDiag()
+  local db = SS.db
+  if not db then Print("Not loaded yet.") return end
+  if not HubAvailable() then
+    Print(EMBER .. "EbonholdHub not detected" .. R
+      .. " — affix knowledge unavailable; every affixed item stays KEEP.")
+    return
+  end
+  Print(GOLD .. "AFFIX CHECK" .. R .. " — item rank vs. your learned rank."
+    .. (db.affixSellAnyRank and (" Mode: " .. VERD .. "sell any learned rank" .. R .. ".")
+        or (" Mode: " .. BRIGHT .. "keep higher-rank copies" .. R
+            .. " (toggle in /sweep config).")))
+  local n = 0
+  for bag = 0, 4 do
+    for slot = 1, GetContainerNumSlots(bag) do
+      local link = GetContainerItemLink(bag, slot)
+      local name = link and GetItemInfo(link)
+      if name then
+        local entry = HubReadAffix(link)
+        local pName, pRank = ParseAffixName(name)
+        local aName = (entry and entry.name) or pName
+        local aRank = (entry and entry.rank) or pRank
+        if aName then
+          n = n + 1
+          local found, best, rankless = HubLearnedInfo(aName)
+          local weapon = IsWeaponAffix(aName)
+          local learned = HubAffixLearned(aName, aRank, db.affixSellAnyRank)
+          local state, col
+          if found == false then state, col = "NEED (never learned)", EMBER
+          elseif weapon or not aRank then
+            state, col = (rankless or (best or 0) > 0) and "HAVE" or "NEED",
+              (rankless or (best or 0) > 0) and VERD or EMBER
+          elseif (best or 0) >= aRank then state, col = "HAVE (rank " .. best .. ")", VERD
+          elseif (best or 0) > 0 then
+            state, col = "PARTIAL (you have " .. best .. ", item is " .. aRank .. ")", BRIGHT
+          else state, col = "NEED (item is " .. aRank .. ")", EMBER end
+          local verdict = (learned == true) and (VERD .. "affix OK to sell" .. R)
+            or (EMBER .. "affix KEEP" .. R)
+          DEFAULT_CHAT_FRAME:AddMessage("  " .. (link or name) .. DIM .. " — " .. R
+            .. col .. state .. R .. DIM .. " → " .. R .. verdict)
+        end
+      end
+    end
+  end
+  if n == 0 then Print("No affixed items in your bags.") return end
+  Print(DIM .. "\"affix OK to sell\" still needs Smart mode ON and the stats to not"
+    .. " be an upgrade before it actually sells." .. R)
 end

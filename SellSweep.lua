@@ -31,7 +31,12 @@ local DEFAULTS = {
   consumableKeep = { Potion=true, Elixir=true, Flask=true, ["Food & Drink"]=true,
                      Bandage=true, Scroll=true, Other=true },
   smartSell = false,  -- smart mode: also sell known-affix non-upgrade greens/blues
-  keep = {},   -- [itemID] = item name
+  -- When true, an affix learned at ANY rank counts as owned for selling, so a
+  -- higher-rank copy is vendor trash. Default false = keep higher-rank copies
+  -- (they still advance your affix collection when extracted).
+  affixSellAnyRank = false,
+  keep = {},        -- WHITELIST: [itemID] = name — never sold
+  blacklist = {},   -- BLACKLIST: [itemID] = name — always sold, overrides all else
 }
 
 local function Print(msg)
@@ -175,10 +180,20 @@ local function RefreshPanel()
   end
   panel.auto:SetChecked(DB.autoSell)
   panel.smart:SetChecked(DB.smartSell)
+  if panel.anyRank then panel.anyRank:SetChecked(DB.affixSellAnyRank) end
 
+  -- Combined rule list: keep (whitelist) + blacklist, each tagged.
   local items = {}
-  for id, name in pairs(DB.keep) do items[#items+1] = { id = id, name = name } end
-  table.sort(items, function(a, b) return tostring(a.name) < tostring(b.name) end)
+  for id, name in pairs(DB.keep or {}) do
+    items[#items+1] = { id = id, name = name, kind = "keep" }
+  end
+  for id, name in pairs(DB.blacklist or {}) do
+    items[#items+1] = { id = id, name = name, kind = "sell" }
+  end
+  table.sort(items, function(a, b)
+    if a.kind ~= b.kind then return a.kind < b.kind end  -- keep before sell
+    return tostring(a.name) < tostring(b.name)
+  end)
   local y = 0
   for i, it in ipairs(items) do
     local row = rows[i]
@@ -195,9 +210,11 @@ local function RefreshPanel()
     end
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", panel.listContent, "TOPLEFT", 0, -y)
-    row.text:SetText(tostring(it.name))
+    local tag = (it.kind == "sell") and "|cffd9694a[sell]|r " or "|cff58c9a8[keep]|r "
+    row.text:SetText(tag .. tostring(it.name))
+    local kind, id = it.kind, it.id
     row.del:SetScript("OnClick", function()
-      DB.keep[it.id] = nil
+      if kind == "sell" then DB.blacklist[id] = nil else DB.keep[id] = nil end
       RefreshPanel()
     end)
     row:Show()
@@ -235,7 +252,7 @@ function SS.OpenConfig()
                [4] = { 0.64, 0.21, 0.93 } }
 
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(280); panel:SetHeight(580)
+  panel:SetWidth(280); panel:SetHeight(604)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
@@ -313,25 +330,54 @@ function SS.OpenConfig()
     GameTooltip:Show()
   end)
   panel.smart:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  y = y - 24
+  panel.anyRank = MakeCheck("SellSweepCBAnyRank", "Sell affix gear I've learned at any rank",
+    function(v) DB.affixSellAnyRank = v end)
+  panel.anyRank:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
+  panel.anyRank:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Sell any learned rank")
+    GameTooltip:AddLine("OFF (default): a higher-rank copy of an affix you've"
+      .. " learned at a LOWER rank is kept — extracting it advances your"
+      .. " collection.\nON: once you've learned an affix at any rank, higher-rank"
+      .. " copies are treated as vendor trash.", 1, 1, 1, true)
+    GameTooltip:AddLine("Use /sweep affix to see your learned rank per item.", 0.85, 0.41, 0.29, true)
+    GameTooltip:Show()
+  end)
+  panel.anyRank:SetScript("OnLeave", function() GameTooltip:Hide() end)
   y = y - 32
 
-  section("KEEP-LIST  (never sold)", y); y = y - 20
+  section("ITEM RULES", y); y = y - 20
 
-  -- Primary way to add: the shift-click toggle (accent when active).
+  -- Two mutually-exclusive shift-click modes: KEEP (never sell) and SELL
+  -- (always sell — overrides keep-list + consumable-type protection).
   panel.addBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  panel.addBtn:SetWidth(244); panel.addBtn:SetHeight(22)
+  panel.addBtn:SetWidth(119); panel.addBtn:SetHeight(22)
   panel.addBtn:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, y)
-  panel.addBtn:SetText(keepAddMode and "Stop — shift-click to add" or "+  Shift-click items to keep")
-  panel.addBtn:SetScript("OnClick", function() SS.SetKeepAdd(not keepAddMode) end)
+  panel.addBtn:SetText(SS.AddMode() == "keep" and "Stop keeping" or "+ Shift = Keep")
+  panel.addBtn:SetScript("OnClick", function() SS.SetKeepAdd(SS.AddMode() ~= "keep") end)
   panel.addBtn:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("Shift-click to keep")
-    GameTooltip:AddLine("Turn on, then shift-click items in your bags to add them"
-      .. " to the keep-list (shift-click a kept one to remove it). No box needed.",
-      1, 1, 1, true)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Keep (whitelist)")
+    GameTooltip:AddLine("Turn on, then shift-click bag items to never sell them.", 1, 1, 1, true)
     GameTooltip:Show()
   end)
   panel.addBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  panel.blackBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  panel.blackBtn:SetWidth(119); panel.blackBtn:SetHeight(22)
+  panel.blackBtn:SetPoint("LEFT", panel.addBtn, "RIGHT", 6, 0)
+  panel.blackBtn:SetText(SS.AddMode() == "sell" and "Stop selling" or "+ Shift = Sell")
+  panel.blackBtn:SetScript("OnClick", function() SS.SetBlackAdd(SS.AddMode() ~= "sell") end)
+  panel.blackBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Sell (blacklist)")
+    GameTooltip:AddLine("Turn on, then shift-click bag items to ALWAYS sell them —"
+      .. " overrides the keep-list and consumable-type protection. Great for"
+      .. " dumping low-level potions while keeping the good ones.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.blackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
   y = y - 28
 
   local scroll = CreateFrame("ScrollFrame", "SellSweepKeepScroll", panel, "UIPanelScrollFrameTemplate")
@@ -343,7 +389,7 @@ function SS.OpenConfig()
 
   panel.empty = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   panel.empty:SetPoint("TOPLEFT", scroll, "TOPLEFT", 2, -2)
-  panel.empty:SetText("(empty — shift-click bag items above)")
+  panel.empty:SetText("(no rules — shift-click bag items above)")
 
   -- Secondary: paste a shift-clicked link and Add (for chat-link workflows).
   local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -386,33 +432,47 @@ function SS.OpenConfig()
   panel:Show()
 end
 
--- ---------------------------------------------------------- quick keep-add mode
--- While ON, shift+left-click a bag item to toggle its keep status (add if new,
--- un-keep if already kept) - no editbox, no Add button. Runtime-only so it
--- can't be left on across sessions by accident.
-local keepAddMode = false
+-- ---------------------------------------------------------- shift-click add modes
+-- Two mutually-exclusive modes: "keep" (whitelist, never sell) and "sell"
+-- (blacklist, always sell). While one is ON, shift+left-click a bag item toggles
+-- its membership in that list. Runtime-only so it can't be left on by accident.
+local addMode = nil  -- nil | "keep" | "sell"
 
-function SS.SetKeepAdd(on)
-  keepAddMode = on and true or false
-  if keepAddMode then
-    Print("|cff58c9a8Keep-add ON|r - shift-click items in your bags to keep them"
-      .. " (shift-click a kept one to un-keep). Run |cffe0b352/sweep add|r again to stop.")
-  else
-    Print("Keep-add off.")
-  end
+local function refreshModeButtons()
   if panel and panel.addBtn then
-    panel.addBtn:SetText(keepAddMode and "Stop — shift-click to add"
-      or "+  Shift-click items to keep")
+    panel.addBtn:SetText(addMode == "keep" and "Stop keeping" or "+ Shift = Keep")
+  end
+  if panel and panel.blackBtn then
+    panel.blackBtn:SetText(addMode == "sell" and "Stop selling" or "+ Shift = Sell")
   end
 end
 
-function SS.KeepAddActive() return keepAddMode end
+function SS.SetKeepAdd(on)
+  addMode = on and "keep" or nil
+  Print(addMode == "keep"
+    and "|cff58c9a8Keep-add ON|r - shift-click bag items to KEEP them (shift-click a"
+      .. " kept one to remove). |cffe0b352/sweep add|r to stop."
+    or "Keep-add off.")
+  refreshModeButtons()
+end
+
+function SS.SetBlackAdd(on)
+  addMode = on and "sell" or nil
+  Print(addMode == "sell"
+    and "|cffd9694aSell-add ON|r - shift-click bag items to ALWAYS SELL them (overrides"
+      .. " keep-list + type protection; shift-click a listed one to remove)."
+      .. " |cffe0b352/sweep addsell|r to stop."
+    or "Sell-add off.")
+  refreshModeButtons()
+end
+
+function SS.AddMode() return addMode end
 
 -- Post-hook (safe): the default modified-click only inserts a link when a chat
 -- editbox is focused, so adding here doesn't conflict.
 if ContainerFrameItemButton_OnModifiedClick then
   hooksecurefunc("ContainerFrameItemButton_OnModifiedClick", function(self, button)
-    if not (keepAddMode and DB and IsShiftKeyDown() and button == "LeftButton") then return end
+    if not (addMode and DB and IsShiftKeyDown() and button == "LeftButton") then return end
     local parent = self.GetParent and self:GetParent()
     local bag = parent and parent.GetID and parent:GetID()
     local slot = self.GetID and self:GetID()
@@ -420,13 +480,16 @@ if ContainerFrameItemButton_OnModifiedClick then
     local link = GetContainerItemLink(bag, slot)
     local id = link and ItemIdFromLink(link)
     if not id then return end
-    if DB.keep[id] then
-      Print("Un-kept: " .. tostring(DB.keep[id]))
-      DB.keep[id] = nil
+    local list = (addMode == "sell") and DB.blacklist or DB.keep
+    local other = (addMode == "sell") and DB.keep or DB.blacklist
+    if list[id] then
+      Print("Removed: " .. tostring(list[id]))
+      list[id] = nil
     else
       local name = GetItemInfo(id) or ("item " .. id)
-      DB.keep[id] = name
-      Print("Keeping: " .. name)
+      list[id] = name
+      other[id] = nil  -- an item can't be in both lists
+      Print(((addMode == "sell") and "Will always sell: " or "Keeping: ") .. name)
     end
     RefreshPanel()
   end)
@@ -507,6 +570,13 @@ SlashCmdList["SELLSWEEP"] = function(line)
     SS.Sweep(true)
   elseif cmd == "preview" then
     if SS.Preview then SS.Preview() else Print("SmartSweep.lua failed to load.") end
+  elseif cmd == "affix" then
+    if SS.AffixDiag then SS.AffixDiag() else Print("SmartSweep.lua failed to load.") end
+  elseif cmd == "anyrank" then
+    DB.affixSellAnyRank = not DB.affixSellAnyRank
+    Print("Sell affix gear learned at ANY rank: " .. (DB.affixSellAnyRank and "ON" or "OFF")
+      .. (DB.affixSellAnyRank and "" or " (higher-rank copies are kept as affix progression)"))
+    if panel then RefreshPanel() end
   elseif cmd == "auto" then
     DB.autoSell = not DB.autoSell
     Print("Auto-sell on merchant open: " .. (DB.autoSell and "ON" or "OFF"))
@@ -519,8 +589,25 @@ SlashCmdList["SELLSWEEP"] = function(line)
       .. ". (Pick individual types in /sweep config.)")
     if panel then RefreshPanel() end
   elseif cmd == "add" then
-    SS.SetKeepAdd(not keepAddMode)
+    SS.SetKeepAdd(SS.AddMode() ~= "keep")
+  elseif cmd == "addsell" then
+    SS.SetBlackAdd(SS.AddMode() ~= "sell")
+  elseif cmd == "blacklist" then
+    local id = ItemIdFromLink(arg)
+    if not id then Print("Shift-click an item: /sweep blacklist [item]") return end
+    local name = GetItemInfo(id) or ("item " .. id)
+    DB.blacklist[id] = name; DB.keep[id] = nil
+    Print("Will always sell: " .. name)
     if panel then RefreshPanel() end
+  elseif cmd == "unblacklist" then
+    local id = ItemIdFromLink(arg)
+    if id and DB.blacklist[id] then
+      Print("Removed from sell-list: " .. tostring(DB.blacklist[id]))
+      DB.blacklist[id] = nil
+      if panel then RefreshPanel() end
+    else
+      Print("Shift-click the item: /sweep unblacklist [item]")
+    end
   elseif cmd == "keep" then
     local id = ItemIdFromLink(arg)
     if not id then Print("Shift-click an item into the command: /sweep keep [item]") return end
@@ -545,10 +632,14 @@ SlashCmdList["SELLSWEEP"] = function(line)
     Print("Commands:")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep - sell now (at a merchant)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep preview - dry run: SELL/KEEP verdict for every bag item (sells nothing)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep affix - why each affixed item is kept/sold (your learned rank vs the item's)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep anyrank - toggle: sell affix gear you've learned at ANY rank")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep keep [shift-click item] - never sell it (/sweep unkeep, /sweep list)")
-    DEFAULT_CHAT_FRAME:AddMessage("  /sweep add - toggle shift-click-to-keep: then just shift-click bag items to keep them")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep add - shift-click-to-KEEP mode (never sell those items)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep addsell - shift-click-to-SELL mode (blacklist: always sell, e.g. low-level potions)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep blacklist [shift-click item] - always sell it (/sweep unblacklist)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep potions - keep/sell ALL consumables (pick per-type in /sweep config)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep auto - auto-sell whenever a merchant opens")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep status")
