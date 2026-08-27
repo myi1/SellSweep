@@ -194,7 +194,7 @@ function SS.OpenConfig()
     return
   end
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(260); panel:SetHeight(494)
+  panel:SetWidth(260); panel:SetHeight(524)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
@@ -291,6 +291,21 @@ function SS.OpenConfig()
     end
   end)
 
+  -- Quick-add toggle: shift-click bag items straight into the keep-list.
+  panel.addBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  panel.addBtn:SetWidth(150); panel.addBtn:SetHeight(20)
+  panel.addBtn:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 28, 78)
+  panel.addBtn:SetText(keepAddMode and "Stop shift-click add" or "Shift-click to add")
+  panel.addBtn:SetScript("OnClick", function() SS.SetKeepAdd(not keepAddMode) end)
+  panel.addBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Shift-click to add")
+    GameTooltip:AddLine("Turn on, then shift-click items in your bags to keep them"
+      .. " (shift-click a kept one to un-keep). No box, no Add button.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.addBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
   -- Route shift-clicked item links into our box while it has focus.
   local origInsert = ChatEdit_InsertLink
   ChatEdit_InsertLink = function(link)
@@ -303,6 +318,51 @@ function SS.OpenConfig()
 
   RefreshPanel()
   panel:Show()
+end
+
+-- ---------------------------------------------------------- quick keep-add mode
+-- While ON, shift+left-click a bag item to toggle its keep status (add if new,
+-- un-keep if already kept) - no editbox, no Add button. Runtime-only so it
+-- can't be left on across sessions by accident.
+local keepAddMode = false
+
+function SS.SetKeepAdd(on)
+  keepAddMode = on and true or false
+  if keepAddMode then
+    Print("|cff58c9a8Keep-add ON|r - shift-click items in your bags to keep them"
+      .. " (shift-click a kept one to un-keep). Run |cffe0b352/sweep add|r again to stop.")
+  else
+    Print("Keep-add off.")
+  end
+  if panel and panel.addBtn then
+    panel.addBtn:SetText(keepAddMode and "Stop shift-click add" or "Shift-click to add")
+  end
+end
+
+function SS.KeepAddActive() return keepAddMode end
+
+-- Post-hook (safe): the default modified-click only inserts a link when a chat
+-- editbox is focused, so adding here doesn't conflict.
+if ContainerFrameItemButton_OnModifiedClick then
+  hooksecurefunc("ContainerFrameItemButton_OnModifiedClick", function(self, button)
+    if not (keepAddMode and DB and IsShiftKeyDown() and button == "LeftButton") then return end
+    local parent = self.GetParent and self:GetParent()
+    local bag = parent and parent.GetID and parent:GetID()
+    local slot = self.GetID and self:GetID()
+    if not (bag and slot and bag >= 0 and bag <= 4) then return end
+    local link = GetContainerItemLink(bag, slot)
+    local id = link and ItemIdFromLink(link)
+    if not id then return end
+    if DB.keep[id] then
+      Print("Un-kept: " .. tostring(DB.keep[id]))
+      DB.keep[id] = nil
+    else
+      local name = GetItemInfo(id) or ("item " .. id)
+      DB.keep[id] = name
+      Print("Keeping: " .. name)
+    end
+    RefreshPanel()
+  end)
 end
 
 -- Merchant button + auto-sell.
@@ -382,6 +442,9 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DB.protectConsumables = not DB.protectConsumables
     Print("Consumables (potions/food/flasks) are now "
       .. (DB.protectConsumables and "PROTECTED" or "|cffff5050SELLABLE|r") .. ".")
+  elseif cmd == "add" then
+    SS.SetKeepAdd(not keepAddMode)
+    if panel then RefreshPanel() end
   elseif cmd == "keep" then
     local id = ItemIdFromLink(arg)
     if not id then Print("Shift-click an item into the command: /sweep keep [item]") return end
@@ -409,6 +472,7 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep keep [shift-click item] - never sell it (/sweep unkeep, /sweep list)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep add - toggle shift-click-to-keep: then just shift-click bag items to keep them")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep potions - toggle consumable protection")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep auto - auto-sell whenever a merchant opens")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep status")
