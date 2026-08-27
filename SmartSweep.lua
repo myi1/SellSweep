@@ -157,20 +157,19 @@ end
 SS.SmartHubLearnedInfo = HubLearnedInfo
 
 -- true = counts as owned for selling, false = not owned (keep), nil = cannot tell.
--- Mirrors the Hub's own semantics: for armor, a learned rank >= the item's rank
--- counts (a lower learned rank is only PARTIAL — the copy still advances you, so
--- it is kept). anyRank overrides that: once learned at ANY rank, the copy is
--- vendor trash regardless of its rank.
-local function HubAffixLearned(name, rank, anyRank)
+-- Mirrors the Hub's own semantics: a learned rank >= the item's rank counts as
+-- owned (sell the duplicate). A copy whose rank EXCEEDS your best learned rank is
+-- only PARTIAL — it still advances your collection when extracted, so it is kept.
+local function HubAffixLearned(name, rank)
   local found, best, rankless = HubLearnedInfo(name)
   if found == nil then return nil end      -- Hub can't tell
   if found == false then return false end  -- provably never learned at any rank
-  if IsWeaponAffix(name) or not rank or anyRank then
+  if IsWeaponAffix(name) or not rank then
     if rankless or best > 0 then return true end
     return false
   end
-  if best >= rank then return true end
-  return false
+  if best >= rank then return true end     -- learned at >= item rank -> duplicate
+  return false                             -- higher rank than you own -> keep to extract
 end
 
 -- Is the echo a tome teaches already learned? Uses the Hub's discovered-echo
@@ -365,7 +364,7 @@ function SS.Classify(bag, slot, smartMode)
       if aName then
         local _, best = HubLearnedInfo(aName)
         v.affixLearnedBest = best
-        learned = HubAffixLearned(aName, aRank, db.affixSellAnyRank)
+        learned = HubAffixLearned(aName, aRank)
       end
       if learned == false then return keep("unlearned") end
       if learned == nil then return keep("affix?") end
@@ -466,9 +465,7 @@ function SS.AffixDiag()
     return
   end
   Print(GOLD .. "AFFIX CHECK" .. R .. " — item rank vs. your learned rank."
-    .. (db.affixSellAnyRank and (" Mode: " .. VERD .. "sell any learned rank" .. R .. ".")
-        or (" Mode: " .. BRIGHT .. "keep higher-rank copies" .. R
-            .. " (toggle in /sweep config).")))
+    .. DIM .. " HAVE = duplicate (sell ok); PARTIAL/NEED = kept to extract." .. R)
   local n = 0
   for bag = 0, 4 do
     for slot = 1, GetContainerNumSlots(bag) do
@@ -483,7 +480,7 @@ function SS.AffixDiag()
           n = n + 1
           local found, best, rankless = HubLearnedInfo(aName)
           local weapon = IsWeaponAffix(aName)
-          local learned = HubAffixLearned(aName, aRank, db.affixSellAnyRank)
+          local learned = HubAffixLearned(aName, aRank)
           local state, col
           if found == false then state, col = "NEED (never learned)", EMBER
           elseif weapon or not aRank then

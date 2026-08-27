@@ -26,15 +26,12 @@ function SS.ConsumableBucket(subType) return CONSUM_MAP[subType or ""] or "Other
 local DEFAULTS = {
   qualities = { [0]=true, [1]=false, [2]=false, [3]=false, [4]=false },
   autoSell = false,
+  autoRepair = false, -- repair all gear on merchant open (guild funds first if allowed)
   protectConsumables = true, -- legacy master (kept for migration only)
   -- Per-type consumable protection (true = keep, never sell that type).
   consumableKeep = { Potion=true, Elixir=true, Flask=true, ["Food & Drink"]=true,
                      Bandage=true, Scroll=true, Other=true },
   smartSell = false,  -- smart mode: also sell known-affix non-upgrade greens/blues
-  -- When true, an affix learned at ANY rank counts as owned for selling, so a
-  -- higher-rank copy is vendor trash. Default false = keep higher-rank copies
-  -- (they still advance your affix collection when extracted).
-  affixSellAnyRank = false,
   -- Sell tomes whose echo you've already learned (duplicates). Off by default
   -- so no tome is ever sold unless you opt in; only positively-owned echoes go.
   sellLearnedTomes = false,
@@ -153,11 +150,56 @@ function SS.FilterText()
 end
 
 function SS.Status()
-  Print("Selling: " .. SS.FilterText() .. " · auto-sell: " .. (DB.autoSell and "ON" or "OFF"))
+  Print("Selling: " .. SS.FilterText() .. " · auto-sell: " .. (DB.autoSell and "ON" or "OFF")
+    .. " · auto-repair: " .. (DB.autoRepair and "ON" or "OFF"))
   local n = 0
   for _ in pairs(DB.keep) do n = n + 1 end
   Print("Keep-list: " .. n .. " item" .. (n == 1 and "" or "s")
     .. " (/sweep list to view, /sweep keep [shift-click item] to add)")
+end
+
+-- Repair everything at the open merchant. Prefers guild funds when the guild
+-- allows it and the withdrawal cap covers the bill; otherwise uses your own
+-- gold. Called on MERCHANT_SHOW when auto-repair is on; also /sweep repair.
+function SS.RepairAll(silent)
+  if not (MerchantFrame and MerchantFrame:IsShown()) then
+    if not silent then Print("Open a merchant first.") end
+    return
+  end
+  if not (CanMerchantRepair and CanMerchantRepair()) then
+    if not silent then Print("This merchant can't repair.") end
+    return
+  end
+  local cost, canRepair = GetRepairAllCost()
+  if not canRepair or not cost or cost <= 0 then
+    if not silent then Print("Nothing to repair.") end
+    return
+  end
+  -- Guild funds first, when permitted and the allowance covers it.
+  if CanGuildBankRepair and CanGuildBankRepair() then
+    local allow = GetGuildBankWithdrawMoney and GetGuildBankWithdrawMoney() or 0
+    if allow == -1 or allow >= cost then      -- -1 = unlimited withdrawal
+      RepairAllItems(true)
+      Print("Repaired for " .. Money(cost) .. " |cff8aa96a(guild funds)|r.")
+      return
+    end
+  end
+  if GetMoney() >= cost then
+    RepairAllItems()
+    Print("Repaired for " .. Money(cost) .. ".")
+  else
+    Print("|cffd9694aCan't repair|r — need " .. Money(cost)
+      .. ", you have " .. Money(GetMoney()) .. ".")
+  end
+end
+
+-- Auto-repair entry point: only acts when there is actually something to fix,
+-- and stays quiet when it can't (no repairs needed / not a repair vendor).
+function SS.AutoRepair()
+  if not (CanMerchantRepair and CanMerchantRepair()) then return end
+  local cost, canRepair = GetRepairAllCost()
+  if not canRepair or not cost or cost <= 0 then return end
+  SS.RepairAll(true)
 end
 
 local function KeepList()
@@ -182,8 +224,8 @@ local function RefreshPanel()
     end
   end
   panel.auto:SetChecked(DB.autoSell)
+  if panel.repair then panel.repair:SetChecked(DB.autoRepair) end
   panel.smart:SetChecked(DB.smartSell)
-  if panel.anyRank then panel.anyRank:SetChecked(DB.affixSellAnyRank) end
   if panel.tomes then panel.tomes:SetChecked(DB.sellLearnedTomes) end
 
   -- Combined rule list: keep (whitelist) + blacklist, each tagged.
@@ -320,6 +362,19 @@ function SS.OpenConfig()
   panel.auto = MakeCheck("SellSweepCBAuto", "Auto-sell when a merchant opens",
     function(v) DB.autoSell = v end)
   panel.auto:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y); y = y - 24
+  panel.repair = MakeCheck("SellSweepCBRepair", "Auto-repair when a merchant opens",
+    function(v) DB.autoRepair = v end)
+  panel.repair:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
+  panel.repair:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Auto-repair")
+    GameTooltip:AddLine("Repairs all your gear when you open a repair-capable"
+      .. " merchant. Uses guild funds first when your guild allows it, otherwise"
+      .. " your own gold.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.repair:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  y = y - 24
   panel.smart = MakeCheck("SellSweepCBSmart", "Smart sell known-affix non-upgrades",
     function(v) DB.smartSell = v end)
   panel.smart:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
@@ -334,21 +389,6 @@ function SS.OpenConfig()
     GameTooltip:Show()
   end)
   panel.smart:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  y = y - 24
-  panel.anyRank = MakeCheck("SellSweepCBAnyRank", "Sell affix gear I've learned at any rank",
-    function(v) DB.affixSellAnyRank = v end)
-  panel.anyRank:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
-  panel.anyRank:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("Sell any learned rank")
-    GameTooltip:AddLine("OFF (default): a higher-rank copy of an affix you've"
-      .. " learned at a LOWER rank is kept — extracting it advances your"
-      .. " collection.\nON: once you've learned an affix at any rank, higher-rank"
-      .. " copies are treated as vendor trash.", 1, 1, 1, true)
-    GameTooltip:AddLine("Use /sweep affix to see your learned rank per item.", 0.85, 0.41, 0.29, true)
-    GameTooltip:Show()
-  end)
-  panel.anyRank:SetScript("OnLeave", function() GameTooltip:Hide() end)
   y = y - 24
   panel.tomes = MakeCheck("SellSweepCBTomes", "Sell tomes I've already learned",
     function(v) DB.sellLearnedTomes = v end)
@@ -568,6 +608,7 @@ ev:SetScript("OnEvent", function(_, event, name)
       end)
       cfg:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
+    if DB and DB.autoRepair then SS.AutoRepair() end
     if DB and DB.autoSell then SS.Sweep() end
   end
 end)
@@ -590,10 +631,11 @@ SlashCmdList["SELLSWEEP"] = function(line)
     if SS.Preview then SS.Preview() else Print("SmartSweep.lua failed to load.") end
   elseif cmd == "affix" then
     if SS.AffixDiag then SS.AffixDiag() else Print("SmartSweep.lua failed to load.") end
-  elseif cmd == "anyrank" then
-    DB.affixSellAnyRank = not DB.affixSellAnyRank
-    Print("Sell affix gear learned at ANY rank: " .. (DB.affixSellAnyRank and "ON" or "OFF")
-      .. (DB.affixSellAnyRank and "" or " (higher-rank copies are kept as affix progression)"))
+  elseif cmd == "repair" then
+    SS.RepairAll()
+  elseif cmd == "autorepair" then
+    DB.autoRepair = not DB.autoRepair
+    Print("Auto-repair on merchant open: " .. (DB.autoRepair and "ON" or "OFF"))
     if panel then RefreshPanel() end
   elseif cmd == "tomes" or cmd == "tome" then
     DB.sellLearnedTomes = not DB.sellLearnedTomes
@@ -657,7 +699,6 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep - sell now (at a merchant)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep preview - dry run: SELL/KEEP verdict for every bag item (sells nothing)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep affix - why each affixed item is kept/sold (your learned rank vs the item's)")
-    DEFAULT_CHAT_FRAME:AddMessage("  /sweep anyrank - toggle: sell affix gear you've learned at ANY rank")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep tomes - toggle: sell tomes whose echo you've already learned")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
@@ -667,6 +708,8 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep blacklist [shift-click item] - always sell it (/sweep unblacklist)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep potions - keep/sell ALL consumables (pick per-type in /sweep config)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep auto - auto-sell whenever a merchant opens")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep repair - repair all gear now (guild funds first if allowed)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep autorepair - toggle auto-repair on merchant open")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep status")
   end
 end
