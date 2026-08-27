@@ -12,10 +12,24 @@ local QUALITY_KEY  = { gray=0, white=1, green=2, blue=3, epic=4, purple=4 }
 local QUALITY_COLOR = { [0]="|cff9d9d9d", [1]="|cffffffff", [2]="|cff1eff00",
                         [3]="|cff0070dd", [4]="|cffa335ee" }
 
+-- Consumable types the keep-list can protect individually. Any GetItemInfo
+-- subtype not named here maps to "Other".
+local CONSUMABLE_TYPES = { "Potion", "Elixir", "Flask", "Food & Drink",
+                          "Bandage", "Scroll", "Other" }
+SS.CONSUMABLE_TYPES = CONSUMABLE_TYPES
+local CONSUM_MAP = {
+  ["Potion"] = "Potion", ["Elixir"] = "Elixir", ["Flask"] = "Flask",
+  ["Food & Drink"] = "Food & Drink", ["Bandage"] = "Bandage", ["Scroll"] = "Scroll",
+}
+function SS.ConsumableBucket(subType) return CONSUM_MAP[subType or ""] or "Other" end
+
 local DEFAULTS = {
   qualities = { [0]=true, [1]=false, [2]=false, [3]=false, [4]=false },
   autoSell = false,
-  protectConsumables = true,
+  protectConsumables = true, -- legacy master (kept for migration only)
+  -- Per-type consumable protection (true = keep, never sell that type).
+  consumableKeep = { Potion=true, Elixir=true, Flask=true, ["Food & Drink"]=true,
+                     Bandage=true, Scroll=true, Other=true },
   smartSell = false,  -- smart mode: also sell known-affix non-upgrade greens/blues
   keep = {},   -- [itemID] = item name
 }
@@ -107,14 +121,27 @@ function SS.Sweep(forceSmart)
   seller:Show()
 end
 
+-- How many consumable types are protected (kept).
+local function ConsumKeptCount()
+  local n = 0
+  for _, t in ipairs(CONSUMABLE_TYPES) do
+    if not DB.consumableKeep or DB.consumableKeep[t] ~= false then n = n + 1 end
+  end
+  return n
+end
+SS.ConsumKeptCount = ConsumKeptCount
+
 function SS.FilterText()
   local on = {}
   for q = 0, 4 do
     if DB.qualities[q] then on[#on+1] = QUALITY_COLOR[q] .. QUALITY_NAME[q] .. "|r" end
   end
+  local kept = ConsumKeptCount()
+  local cons = (kept == #CONSUMABLE_TYPES) and " |cff58c9a8(consumables protected)|r"
+    or (kept == 0) and " |cffd9694a(consumables sellable)|r"
+    or (" |cff58c9a8(" .. kept .. "/" .. #CONSUMABLE_TYPES .. " consumable types kept)|r")
   return (#on > 0 and table.concat(on, "+") or "none")
-    .. (DB.smartSell and " |cffe0b352+smart|r" or "")
-    .. (DB.protectConsumables and " |cff58c9a8(consumables protected)|r" or "")
+    .. (DB.smartSell and " |cffe0b352+smart|r" or "") .. cons
 end
 
 function SS.Status()
@@ -141,8 +168,12 @@ local panel, rows = nil, {}
 local function RefreshPanel()
   if not panel or not DB then return end
   for q = 0, 4 do panel.quality[q]:SetChecked(DB.qualities[q]) end
+  if panel.consumable then
+    for ct, cb in pairs(panel.consumable) do
+      cb:SetChecked(DB.consumableKeep and DB.consumableKeep[ct] ~= false)
+    end
+  end
   panel.auto:SetChecked(DB.autoSell)
-  panel.cons:SetChecked(DB.protectConsumables)
   panel.smart:SetChecked(DB.smartSell)
 
   local items = {}
@@ -204,7 +235,7 @@ function SS.OpenConfig()
                [4] = { 0.64, 0.21, 0.93 } }
 
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(280); panel:SetHeight(500)
+  panel:SetWidth(280); panel:SetHeight(580)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
@@ -251,10 +282,20 @@ function SS.OpenConfig()
     y = y - 22
   end
 
-  section("OPTIONS", y - 6); y = y - 26
-  panel.cons = MakeCheck("SellSweepCBCons", "Protect consumables (potions, food)",
-    function(v) DB.protectConsumables = v end)
-  panel.cons:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y); y = y - 24
+  section("CONSUMABLE TYPES TO KEEP", y - 6); y = y - 26
+  panel.consumable = {}
+  for i, ct in ipairs(CONSUMABLE_TYPES) do
+    local safe = string.gsub(ct, "[^%w]", "")
+    local cb = MakeCheck("SellSweepCBC" .. safe, ct,
+      function(v) DB.consumableKeep[ct] = v end)
+    local col = (i - 1) % 2          -- two columns
+    local row = math.floor((i - 1) / 2)
+    cb:SetPoint("TOPLEFT", panel, "TOPLEFT", 20 + col * 128, y - row * 22)
+    panel.consumable[ct] = cb
+  end
+  y = y - (math.ceil(#CONSUMABLE_TYPES / 2) * 22) - 6
+
+  section("OPTIONS", y); y = y - 20
   panel.auto = MakeCheck("SellSweepCBAuto", "Auto-sell when a merchant opens",
     function(v) DB.autoSell = v end)
   panel.auto:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y); y = y - 24
@@ -295,7 +336,7 @@ function SS.OpenConfig()
 
   local scroll = CreateFrame("ScrollFrame", "SellSweepKeepScroll", panel, "UIPanelScrollFrameTemplate")
   scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, y)
-  scroll:SetWidth(226); scroll:SetHeight(104)
+  scroll:SetWidth(226); scroll:SetHeight(90)
   panel.listContent = CreateFrame("Frame", nil, scroll)
   panel.listContent:SetWidth(226); panel.listContent:SetHeight(10)
   scroll:SetScrollChild(panel.listContent)
@@ -410,6 +451,11 @@ ev:SetScript("OnEvent", function(_, event, name)
       end
     end
     if type(SellSweepDB.scans) ~= "table" then SellSweepDB.scans = {} end
+    -- Migrate the old all-or-nothing protectConsumables=false into per-type off.
+    if SellSweepDB.protectConsumables == false and not SellSweepDB.consumMigrated then
+      for _, t in ipairs(CONSUMABLE_TYPES) do SellSweepDB.consumableKeep[t] = false end
+    end
+    SellSweepDB.consumMigrated = true
     DB = SellSweepDB
     SS.db = DB
   elseif event == "MERCHANT_SHOW" then
@@ -429,9 +475,9 @@ ev:SetScript("OnEvent", function(_, event, name)
       btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
       local cfg = CreateFrame("Button", "SellSweepCfgButton", MerchantFrame, "UIPanelButtonTemplate")
-      cfg:SetWidth(36); cfg:SetHeight(21)
+      cfg:SetWidth(54); cfg:SetHeight(21)
       cfg:SetPoint("RIGHT", btn, "LEFT", -4, 0)
-      cfg:SetText("Cfg")
+      cfg:SetText("Config")
       cfg:SetScript("OnClick", function() SS.OpenConfig() end)
       cfg:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
@@ -465,9 +511,13 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DB.autoSell = not DB.autoSell
     Print("Auto-sell on merchant open: " .. (DB.autoSell and "ON" or "OFF"))
   elseif cmd == "potions" or cmd == "consumables" then
-    DB.protectConsumables = not DB.protectConsumables
-    Print("Consumables (potions/food/flasks) are now "
-      .. (DB.protectConsumables and "PROTECTED" or "|cffff5050SELLABLE|r") .. ".")
+    -- Master toggle: if any type is kept, make all sellable; else keep all.
+    local anyKept = SS.ConsumKeptCount() > 0
+    for _, t in ipairs(CONSUMABLE_TYPES) do DB.consumableKeep[t] = not anyKept end
+    Print("All consumables are now "
+      .. (anyKept and "|cffff5050SELLABLE|r" or "PROTECTED")
+      .. ". (Pick individual types in /sweep config.)")
+    if panel then RefreshPanel() end
   elseif cmd == "add" then
     SS.SetKeepAdd(not keepAddMode)
     if panel then RefreshPanel() end
@@ -499,7 +549,7 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep keep [shift-click item] - never sell it (/sweep unkeep, /sweep list)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep add - toggle shift-click-to-keep: then just shift-click bag items to keep them")
-    DEFAULT_CHAT_FRAME:AddMessage("  /sweep potions - toggle consumable protection")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep potions - keep/sell ALL consumables (pick per-type in /sweep config)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep auto - auto-sell whenever a merchant opens")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep status")
   end

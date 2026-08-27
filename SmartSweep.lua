@@ -265,7 +265,7 @@ function SS.Classify(bag, slot, smartMode)
   local link = GetContainerItemLink(bag, slot)
   if not link then return nil end
   local id = SS.ItemIdFromLink and SS.ItemIdFromLink(link) or nil
-  local name, _, quality, ilvl, _, itemType, _, _, equipLoc, _, sellPrice = GetItemInfo(link)
+  local name, _, quality, ilvl, _, itemType, itemSubType, _, equipLoc, _, sellPrice = GetItemInfo(link)
   local _, count = GetContainerItemInfo(bag, slot)
   count = count or 1
 
@@ -283,7 +283,14 @@ function SS.Classify(bag, slot, smartMode)
   if not sellPrice or sellPrice <= 0 then return keep("no-price") end
   if itemType == "Quest" then return keep("quest") end
   if itemType == "Recipe" then return keep("recipe") end
-  if db.protectConsumables and itemType == "Consumable" then return keep("consum") end
+  -- Per-type consumable keep: protected types stay; unprotected ones fall
+  -- through to the normal quality/keep rules below.
+  if itemType == "Consumable" then
+    local bucket = SS.ConsumableBucket and SS.ConsumableBucket(itemSubType) or "Other"
+    if not db.consumableKeep or db.consumableKeep[bucket] ~= false then
+      return keep("consum")
+    end
+  end
 
   local lines = BagLines(bag, slot)
   if IsTome(name, lines) then return keep("tome") end
