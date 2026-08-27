@@ -4,6 +4,17 @@ All notable changes to SellSweep are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); version numbers match the
 GitHub releases and the `.toc`.
 
+## [1.9.0] - 2026-08-28
+### Fixed
+- Learned echo tomes that are **named after their echo** — e.g. an item called
+  "Arcane Burn" rather than "Tome of ..." — weren't recognized as tomes, so the
+  "Sell tomes I've already learned" toggle never touched them. Detection and the
+  learned check now read the item's own tooltip: `Unlocks Echo:` marks it as a
+  tome, and an `Already learned` line marks the echo as owned (the game's own
+  truth, so it works for every tome regardless of name). The Hub's learned-echo
+  set stays as a secondary signal. As before, a tome only sells on a positive
+  learned match — unread tomes are always kept.
+
 ## [1.8.0] - 2026-08-28
 ### Added
 - **Auto-repair** on merchant open (`/sweep autorepair`, or the config toggle),

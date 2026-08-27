@@ -75,11 +75,28 @@ end
 
 -- Tomes teach echoes; teaching items teach affix ranks / recipes. Kept by
 -- default; only sold when "sell learned tomes" is on AND the echo is owned.
+--
+-- Ebonhold echo tomes are frequently NAMED after the echo they teach rather
+-- than "Tome of ..." — e.g. an item literally called "Arcane Burn" whose
+-- tooltip reads "Unlocks Echo:" and (once read) "Already learned", with no
+-- "teaches" / "use: learn" line. The "unlocks echo" tooltip line catches those
+-- so the learned-tome toggle can reach them at all (before this, IsTome()
+-- returned false for such items and they never entered the tome branch).
 local function IsTome(name, lines)
   if name and string.sub(name, 1, 4) == "Tome" then return true end
   if FindPlain(lines, "use: learn") then return true end
   if FindPlain(lines, "teaches") then return true end
+  if FindPlain(lines, "unlocks echo") then return true end
   return false
+end
+
+-- Tooltip-based "have I read this echo tome?" check. An echo tome you've
+-- already learned prints an "Already learned" line — the game's own truth, and
+-- the most reliable owned signal (more reliable than Hub name resolution, which
+-- is fragile for echo-named items like "Arcane Burn"). Always gate this behind
+-- IsTome() so a non-tome item that merely contains the phrase can't match.
+local function TomeLearnedFromTip(lines)
+  return FindPlain(lines, "already learned") ~= nil
 end
 
 local function IsUnique(lines)
@@ -336,9 +353,14 @@ function SS.Classify(bag, slot, smartMode)
 
   local lines = BagLines(bag, slot)
   if IsTome(name, lines) then
-    -- Opt-in: dump tomes whose echo you've already learned. Only a positive
-    -- ownership match sells; unknown/unlearned tomes are always kept.
-    if db.sellLearnedTomes and TomeEchoOwned(name) == true then
+    -- Opt-in: dump tomes whose echo you've already learned. Two positive
+    -- signals, either is sufficient: the tooltip's own "Already learned" line
+    -- (primary — the game's truth, and the only signal that works when the item
+    -- is named after its echo, e.g. "Arcane Burn"), or the Hub's learned-echo
+    -- set (secondary). Only a POSITIVE learned match sells; if neither confirms
+    -- "learned", the tome is kept — an unread tome is never vendored.
+    if db.sellLearnedTomes
+       and (TomeLearnedFromTip(lines) or TomeEchoOwned(name) == true) then
       return sell("tome-known")
     end
     return keep("tome")
