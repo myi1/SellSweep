@@ -68,8 +68,9 @@ difference:
 2. Extract the `SellSweep` folder into `World of Warcraft\Interface\AddOns\`.
 3. `/reload` (or restart) — type `/sweep` in-game for all commands.
 
-The affix/tome intelligence needs **EbonholdHub** loaded; without it, SellSweep
-still works as a quality-toggle sweeper and keeps every affixed item to be safe.
+The affix/tome intelligence needs **[EbonholdHub](https://ebonholdhub.icu)**
+loaded; without it, SellSweep still works as a quality-toggle sweeper and keeps
+every affixed item to be safe.
 
 See [CHANGELOG.md](CHANGELOG.md) for the per-version history. Client-side only,
 no server changes; not affiliated with the Ebonhold team.
