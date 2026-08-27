@@ -73,7 +73,8 @@ local function HasAffixMarker(lines)
   return FindPlain(lines, "@affix@") ~= nil
 end
 
--- Tomes teach echoes; teaching items teach affix ranks / recipes. Never sell.
+-- Tomes teach echoes; teaching items teach affix ranks / recipes. Kept by
+-- default; only sold when "sell learned tomes" is on AND the echo is owned.
 local function IsTome(name, lines)
   if name and string.sub(name, 1, 4) == "Tome" then return true end
   if FindPlain(lines, "use: learn") then return true end
@@ -171,6 +172,26 @@ local function HubAffixLearned(name, rank, anyRank)
   if best >= rank then return true end
   return false
 end
+
+-- Is the echo a tome teaches already learned? Uses the Hub's discovered-echo
+-- set (GetDiscoveredEchoes), keyed by the same normalized names the Hub UI
+-- uses, so "Tome of X - Rare" resolves to echo "x". true = learned (dup, sell
+-- ok), false = not learned (keep), nil = cannot tell (keep). Conservative: only
+-- a positive match ever allows a sell.
+local function TomeEchoOwned(name)
+  if not name then return nil end
+  local hub = _G.EbonholdHub
+  if not (hub and hub.EchoOwnership and hub.EchoOwnership.NormalizeName) then return nil end
+  local getset = hub.EchoOwnership.CollectTomeOwnedSets or hub.EchoOwnership.CollectOwnedSets
+  if type(getset) ~= "function" then return nil end
+  local ok, ownedLower = pcall(getset)
+  if not ok or type(ownedLower) ~= "table" then return nil end
+  local norm = hub.EchoOwnership.NormalizeName(name)
+  if not norm or norm == "" then return nil end
+  if ownedLower[norm] then return true end
+  return false
+end
+SS.SmartTomeEchoOwned = TomeEchoOwned
 
 -- ------------------------------------------------------------ stats & slots
 
@@ -315,7 +336,14 @@ function SS.Classify(bag, slot, smartMode)
   end
 
   local lines = BagLines(bag, slot)
-  if IsTome(name, lines) then return keep("tome") end
+  if IsTome(name, lines) then
+    -- Opt-in: dump tomes whose echo you've already learned. Only a positive
+    -- ownership match sells; unknown/unlearned tomes are always kept.
+    if db.sellLearnedTomes and TomeEchoOwned(name) == true then
+      return sell("tome-known")
+    end
+    return keep("tome")
+  end
   if FindPlain(lines, "quest item") then return keep("quest") end
 
   -- Affix protection (green+): an UNLEARNED affix is affix progression —

@@ -35,6 +35,9 @@ local DEFAULTS = {
   -- higher-rank copy is vendor trash. Default false = keep higher-rank copies
   -- (they still advance your affix collection when extracted).
   affixSellAnyRank = false,
+  -- Sell tomes whose echo you've already learned (duplicates). Off by default
+  -- so no tome is ever sold unless you opt in; only positively-owned echoes go.
+  sellLearnedTomes = false,
   keep = {},        -- WHITELIST: [itemID] = name — never sold
   blacklist = {},   -- BLACKLIST: [itemID] = name — always sold, overrides all else
 }
@@ -181,6 +184,7 @@ local function RefreshPanel()
   panel.auto:SetChecked(DB.autoSell)
   panel.smart:SetChecked(DB.smartSell)
   if panel.anyRank then panel.anyRank:SetChecked(DB.affixSellAnyRank) end
+  if panel.tomes then panel.tomes:SetChecked(DB.sellLearnedTomes) end
 
   -- Combined rule list: keep (whitelist) + blacklist, each tagged.
   local items = {}
@@ -252,7 +256,7 @@ function SS.OpenConfig()
                [4] = { 0.64, 0.21, 0.93 } }
 
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(280); panel:SetHeight(604)
+  panel:SetWidth(280); panel:SetHeight(628)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
@@ -345,6 +349,20 @@ function SS.OpenConfig()
     GameTooltip:Show()
   end)
   panel.anyRank:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  y = y - 24
+  panel.tomes = MakeCheck("SellSweepCBTomes", "Sell tomes I've already learned",
+    function(v) DB.sellLearnedTomes = v end)
+  panel.tomes:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
+  panel.tomes:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Sell learned tomes")
+    GameTooltip:AddLine("OFF (default): every tome is kept.\nON: a tome is sold"
+      .. " only when its echo is already in your learned collection — unlearned"
+      .. " tomes are always kept. The keep-list still protects any tome you pin.",
+      1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.tomes:SetScript("OnLeave", function() GameTooltip:Hide() end)
   y = y - 32
 
   section("ITEM RULES", y); y = y - 20
@@ -577,6 +595,12 @@ SlashCmdList["SELLSWEEP"] = function(line)
     Print("Sell affix gear learned at ANY rank: " .. (DB.affixSellAnyRank and "ON" or "OFF")
       .. (DB.affixSellAnyRank and "" or " (higher-rank copies are kept as affix progression)"))
     if panel then RefreshPanel() end
+  elseif cmd == "tomes" or cmd == "tome" then
+    DB.sellLearnedTomes = not DB.sellLearnedTomes
+    Print("Sell tomes I've already learned: " .. (DB.sellLearnedTomes and "ON" or "OFF")
+      .. (DB.sellLearnedTomes and " (only echoes already in your collection)"
+          or " (all tomes kept)"))
+    if panel then RefreshPanel() end
   elseif cmd == "auto" then
     DB.autoSell = not DB.autoSell
     Print("Auto-sell on merchant open: " .. (DB.autoSell and "ON" or "OFF"))
@@ -634,6 +658,7 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep preview - dry run: SELL/KEEP verdict for every bag item (sells nothing)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep affix - why each affixed item is kept/sold (your learned rank vs the item's)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep anyrank - toggle: sell affix gear you've learned at ANY rank")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep tomes - toggle: sell tomes whose echo you've already learned")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep keep [shift-click item] - never sell it (/sweep unkeep, /sweep list)")
