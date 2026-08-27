@@ -4,6 +4,25 @@ All notable changes to SellSweep are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); version numbers match the
 GitHub releases and the `.toc`.
 
+## [1.10.0] - 2026-08-28
+### Fixed
+- Echo tomes ("Tome of Echo: ...") were still never sold by "Sell tomes I've
+  already learned", even when learned. They report itemType **Recipe**, so the
+  recipe keep-gate returned `keep("recipe")` before the tome logic ever ran —
+  the toggle was unreachable for them. The tome check now runs **ahead of** the
+  Quest / Recipe / Consumable gates, so echo tomes reach it regardless of their
+  reported item type. (This is the bug 1.9.0 targeted but missed.)
+- The learned check now also reads **"Already known"**, the line SellSweep's own
+  background tooltip scan actually shows. (Some servers/addons render the
+  per-character learned line only on the live tooltip — e.g. as "Already
+  learned" — which a `SetBagItem` scan never receives.) Only echo tomes (name
+  "Tome of Echo:" or an "Unlocks Echo:" line) can be sold this way, so ordinary
+  crafting recipes are never touched.
+### Added
+- `/sweep tomediag` — writes a full per-tome diagnostic (item type, sell price,
+  every detection result, the raw scanned tooltip lines, and the verdict) to
+  `SellSweepDB.scans.tomediag`. Run it, then `/reload` to flush it to disk.
+
 ## [1.9.0] - 2026-08-28
 ### Fixed
 - Learned echo tomes that are **named after their echo** — e.g. an item called

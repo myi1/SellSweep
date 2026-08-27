@@ -1,7 +1,7 @@
 ## Interface: 30300
 ## Title: SellSweep
 ## Notes: One-click bag clearing at vendors: sell by quality (gray/white/green/blue/epic toggles) with a protected keep-list, a smart mode that sells known-affix non-upgrade greens/blues, plus optional auto-sell and auto-repair on merchant open. Built for Ebonhold loot volume.
-## Version: 1.9.0
+## Version: 1.10.0
 ## SavedVariables: SellSweepDB
 
 SellSweep.lua

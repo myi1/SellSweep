@@ -90,13 +90,30 @@ local function IsTome(name, lines)
   return false
 end
 
--- Tooltip-based "have I read this echo tome?" check. An echo tome you've
--- already learned prints an "Already learned" line — the game's own truth, and
--- the most reliable owned signal (more reliable than Hub name resolution, which
--- is fragile for echo-named items like "Arcane Burn"). Always gate this behind
--- IsTome() so a non-tome item that merely contains the phrase can't match.
+-- Narrower than IsTome: specifically an Ebonhold ECHO tome — the only kind the
+-- "sell learned tomes" toggle may ever sell. Echo tomes are named
+-- "Tome of Echo: <EchoName>" and/or carry an "Unlocks Echo:" tooltip line.
+-- Gating the learned-sell on THIS (never plain IsTome) keeps ordinary crafting
+-- recipes — which also match IsTome via their "teaches" line and can likewise
+-- show "Already known" — from ever being vendored.
+local function IsEchoTome(name, lines)
+  if name and string.find(string.lower(name), "tome of echo", 1, true) then return true end
+  if FindPlain(lines, "unlocks echo") then return true end
+  return false
+end
+
+-- Tooltip-based "have I read this echo tome?" check. A learned echo tome prints
+-- a per-character line in the tooltip. SellSweep's own hidden scan tooltip
+-- (SetBagItem) shows "Already known"; the live in-game tooltip may ADDITIONALLY
+-- show an "Already learned" line injected by another addon (e.g. PallyPilot)
+-- that our background scan never receives — so match BOTH, case-insensitively.
+-- Confirmed via /sweep tomediag on "Tome of Echo: Arcane Surge": the scanned
+-- lines contained "Already known", not "Already learned". Only meaningful when
+-- gated behind IsEchoTome() (see the tome branch in Classify), so a non-echo
+-- item that merely contains the phrase can never match.
 local function TomeLearnedFromTip(lines)
-  return FindPlain(lines, "already learned") ~= nil
+  return FindPlain(lines, "already known") ~= nil
+      or FindPlain(lines, "already learned") ~= nil
 end
 
 local function IsUnique(lines)
@@ -340,6 +357,28 @@ function SS.Classify(bag, slot, smartMode)
   end
   if db.keep[id] then return keep("keep-list") end
   if not sellPrice or sellPrice <= 0 then return keep("no-price") end
+
+  -- Scan the tooltip up front: tomes/teaching items are governed by the tome
+  -- logic below, NOT the generic Quest/Recipe/Consumable keep gates. This
+  -- ordering is load-bearing: Ebonhold echo tomes report itemType "Recipe"
+  -- (confirmed — "Tome of Echo: X" items scan as Recipe/Book), so if the Recipe
+  -- gate ran first they'd be kept as "recipe" and the learned-tome toggle could
+  -- NEVER reach them (the bug behind v1.10.0). Blacklist, keep-list and
+  -- no-price above still take precedence.
+  local lines = BagLines(bag, slot)
+  if IsTome(name, lines) then
+    -- Opt-in: dump echo tomes you've already read (duplicates). Only ECHO tomes
+    -- (IsEchoTome) may sell, and only on a POSITIVE learned signal — the scan
+    -- tooltip's "Already known"/"Already learned" line, or the Hub's learned-
+    -- echo set. If nothing confirms it's learned, the tome is kept; an unread
+    -- tome (or any non-echo teaching item / crafting recipe) is never vendored.
+    if db.sellLearnedTomes and IsEchoTome(name, lines)
+       and (TomeLearnedFromTip(lines) or TomeEchoOwned(name) == true) then
+      return sell("tome-known")
+    end
+    return keep("tome")
+  end
+
   if itemType == "Quest" then return keep("quest") end
   if itemType == "Recipe" then return keep("recipe") end
   -- Per-type consumable keep: protected types stay; unprotected ones fall
@@ -349,21 +388,6 @@ function SS.Classify(bag, slot, smartMode)
     if not db.consumableKeep or db.consumableKeep[bucket] ~= false then
       return keep("consum")
     end
-  end
-
-  local lines = BagLines(bag, slot)
-  if IsTome(name, lines) then
-    -- Opt-in: dump tomes whose echo you've already learned. Two positive
-    -- signals, either is sufficient: the tooltip's own "Already learned" line
-    -- (primary — the game's truth, and the only signal that works when the item
-    -- is named after its echo, e.g. "Arcane Burn"), or the Hub's learned-echo
-    -- set (secondary). Only a POSITIVE learned match sells; if neither confirms
-    -- "learned", the tome is kept — an unread tome is never vendored.
-    if db.sellLearnedTomes
-       and (TomeLearnedFromTip(lines) or TomeEchoOwned(name) == true) then
-      return sell("tome-known")
-    end
-    return keep("tome")
   end
   if FindPlain(lines, "quest item") then return keep("quest") end
 
@@ -523,4 +547,58 @@ function SS.AffixDiag()
   if n == 0 then Print("No affixed items in your bags.") return end
   Print(DIM .. "\"affix OK to sell\" still needs Smart mode ON and the stats to not"
     .. " be an upgrade before it actually sells." .. R)
+end
+
+-- ------------------------------------------------------------ /sweep tomediag
+
+-- Diagnostic: writes a full structured dump of every tome-ish bag item (name
+-- contains "Tome", or IsTome matches) into SellSweepDB.scans.tomediag, which is
+-- flushed to the SavedVariables file (WTF\Account\<name>\SavedVariables\
+-- SellSweep.lua) on /reload or logout. Each entry records itemType/subType,
+-- sell price, quality, every detection result (isTome/isEcho/tipLearned/
+-- hubOwned), the RAW scanned tooltip lines, and the final KEEP/SELL verdict —
+-- so the exact tooltip text can be read straight off disk instead of scraped
+-- from chat. Run /sweep tomediag, then /reload, then inspect the file.
+function SS.TomeDiag()
+  local db = SS.db
+  if not db then Print("Not loaded yet.") return end
+  if type(db.scans) ~= "table" then db.scans = {} end
+  local items = {}
+  for bag = 0, 4 do
+    for slot = 1, GetContainerNumSlots(bag) do
+      local link = GetContainerItemLink(bag, slot)
+      local name = link and GetItemInfo(link)
+      if name then
+        local lines = BagLines(bag, slot)
+        if IsTome(name, lines)
+           or string.find(string.lower(name), "tome", 1, true) ~= nil then
+          local _, _, quality, ilvl, _, itemType, itemSubType, _, equipLoc, _, sellPrice = GetItemInfo(link)
+          local v = SS.Classify(bag, slot, db.smartSell and true or false)
+          local owned = TomeEchoOwned(name)   -- true / false / nil (cannot tell)
+          items[#items + 1] = {
+            bag = bag, slot = slot,
+            id = SS.ItemIdFromLink and SS.ItemIdFromLink(link) or nil,
+            name = name, itemType = itemType, itemSubType = itemSubType,
+            quality = quality, ilvl = ilvl, sellPrice = sellPrice, equipLoc = equipLoc,
+            isTome = IsTome(name, lines) and true or false,
+            isEcho = IsEchoTome(name, lines) and true or false,
+            tipLearned = TomeLearnedFromTip(lines) and true or false,
+            hubOwned = (owned == nil) and "nil" or (owned and true or false),
+            action = v and v.action, reason = v and v.reason,
+            lines = lines,
+          }
+        end
+      end
+    end
+  end
+  db.scans.tomediag = {
+    at = (date and date("%Y-%m-%d %H:%M:%S")) or tostring(GetTime and GetTime() or 0),
+    sellLearnedTomes = db.sellLearnedTomes and true or false,
+    hubDetected = HubAvailable(),
+    count = #items,
+    items = items,
+  }
+  Print(GOLD .. "TOME DIAG" .. R .. " — wrote " .. #items
+    .. " tome-ish item(s) to SellSweepDB.scans.tomediag. "
+    .. DIM .. "/reload to flush it to disk." .. R)
 end

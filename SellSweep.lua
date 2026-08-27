@@ -631,6 +631,8 @@ SlashCmdList["SELLSWEEP"] = function(line)
     if SS.Preview then SS.Preview() else Print("SmartSweep.lua failed to load.") end
   elseif cmd == "affix" then
     if SS.AffixDiag then SS.AffixDiag() else Print("SmartSweep.lua failed to load.") end
+  elseif cmd == "tomediag" then
+    if SS.TomeDiag then SS.TomeDiag() else Print("SmartSweep.lua failed to load.") end
   elseif cmd == "repair" then
     SS.RepairAll()
   elseif cmd == "autorepair" then
@@ -699,6 +701,7 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep - sell now (at a merchant)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep preview - dry run: SELL/KEEP verdict for every bag item (sells nothing)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep affix - why each affixed item is kept/sold (your learned rank vs the item's)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep tomediag - dump tome diagnostics to SellSweepDB.scans.tomediag (then /reload)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep tomes - toggle: sell tomes whose echo you've already learned")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
