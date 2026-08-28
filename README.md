@@ -26,7 +26,9 @@ difference:
   `x` the way the game does.
 - **Smart gear check.** In smart mode it sells green/blue/epic armor and weapons
   whose affix is learned/absent **and** that beat nothing you have equipped.
-  Uniques, sets, and quest items are never touched.
+  Uniques and quest items are never touched. Set pieces are kept too by default;
+  opt in with `/sweep sets` to clear low ones **under an item-level cap** (so old
+  leveling/crafted set junk goes while your tier gear stays protected).
 - **Dry-run first.** `/sweep preview` prints a SELL/KEEP verdict (with the
   reason) for every bag item and sells nothing — so you can trust it before you
   ever sell.
@@ -58,6 +60,8 @@ difference:
 | `/sweep keep` / `blacklist` `[shift-click item]` | add to keep-list / blacklist |
 | `/sweep potions` | keep/sell all consumables (per-type in `/sweep config`) |
 | `/sweep tomes` | toggle: sell tomes whose echo you've already learned |
+| `/sweep sets` | toggle: sell set pieces at/below the iLvl cap (tier gear stays kept) |
+| `/sweep setilvl <n>` | set the set-piece iLvl cap (default 150) |
 | `/sweep auto` / `autorepair` | toggle auto-sell / auto-repair on merchant open |
 | `/sweep repair` | repair all gear now |
 | `/sweep status` | current settings |

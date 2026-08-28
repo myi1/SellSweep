@@ -429,7 +429,17 @@ function SS.Classify(bag, slot, smartMode)
   if quality ~= 2 and quality ~= 3 and quality ~= 4 then return keep("filtered") end
   if itemType ~= "Armor" and itemType ~= "Weapon" then return keep("filtered") end
   if IsUnique(lines) then return keep("unique") end
-  if IsSetPiece(lines) then return keep("set") end
+  if IsSetPiece(lines) then
+    -- Set pieces are protected by default. Opt-in (db.sellSetPieces) lets low
+    -- ones through — but ONLY at or below the item-level cap, so real tier gear
+    -- stays safe with no per-item fiddling. A below-cap set piece then faces the
+    -- same gates as any other item: its affix is already confirmed learned (or
+    -- absent) above, and the upgrade verdict below still keeps anything that
+    -- could beat your gear. Above the cap (or toggle off) it's always kept.
+    if not (db.sellSetPieces and ilvl and ilvl <= (db.setPieceMaxIlvl or 0)) then
+      return keep("set")
+    end
+  end
 
   local up = UpgradeVerdict(link, equipLoc, ilvl, lines, v)
   v.upgrade = up

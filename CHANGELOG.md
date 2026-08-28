@@ -4,6 +4,17 @@ All notable changes to SellSweep are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); version numbers match the
 GitHub releases and the `.toc`.
 
+## [1.11.0] - 2026-08-29
+### Added
+- **Sell set pieces** (opt-in): `/sweep sets` or the config toggle. Off by
+  default (smart mode still protects every set piece). When on, a set piece **at
+  or below an item-level cap** is judged by the normal smart rules — its affix
+  must already be learned AND it must beat nothing you have equipped — so old
+  leveling/crafted set junk clears while your tier gear stays protected.
+- **Set-piece iLvl cap** — the slider in the config panel (or `/sweep setilvl
+  <n>`, default 150). Set gear above the cap is always kept. The checkbox label
+  shows the current cap, so the setting reads in words/numbers, not color.
+
 ## [1.10.0] - 2026-08-28
 ### Fixed
 - Echo tomes ("Tome of Echo: ...") were still never sold by "Sell tomes I've

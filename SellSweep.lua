@@ -35,6 +35,12 @@ local DEFAULTS = {
   -- Sell tomes whose echo you've already learned (duplicates). Off by default
   -- so no tome is ever sold unless you opt in; only positively-owned echoes go.
   sellLearnedTomes = false,
+  -- Sell low set pieces too (opt-in). When on, a set piece at or below
+  -- setPieceMaxIlvl is judged by the normal smart rules (affix learned + not an
+  -- upgrade); above the cap it is always kept, so tier gear stays safe. Off by
+  -- default — smart mode protects all set pieces unless you opt in.
+  sellSetPieces = false,
+  setPieceMaxIlvl = 150,
   keep = {},        -- WHITELIST: [itemID] = name — never sold
   blacklist = {},   -- BLACKLIST: [itemID] = name — always sold, overrides all else
 }
@@ -227,6 +233,11 @@ local function RefreshPanel()
   if panel.repair then panel.repair:SetChecked(DB.autoRepair) end
   panel.smart:SetChecked(DB.smartSell)
   if panel.tomes then panel.tomes:SetChecked(DB.sellLearnedTomes) end
+  if panel.sets then panel.sets:SetChecked(DB.sellSetPieces) end
+  if panel.setilvl then panel.setilvl:SetValue(DB.setPieceMaxIlvl or 150) end
+  if _G["SellSweepCBSetsText"] then
+    _G["SellSweepCBSetsText"]:SetText("Sell set pieces (iLvl <= " .. (DB.setPieceMaxIlvl or 150) .. ")")
+  end
 
   -- Combined rule list: keep (whitelist) + blacklist, each tagged.
   local items = {}
@@ -298,7 +309,7 @@ function SS.OpenConfig()
                [4] = { 0.64, 0.21, 0.93 } }
 
   panel = CreateFrame("Frame", "SellSweepConfig", UIParent)
-  panel:SetWidth(280); panel:SetHeight(628)
+  panel:SetWidth(280); panel:SetHeight(684)
   panel:SetPoint("CENTER", UIParent, "CENTER", 180, 0)
   panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
   panel:SetScript("OnDragStart", function(s) s:StartMoving() end)
@@ -403,7 +414,42 @@ function SS.OpenConfig()
     GameTooltip:Show()
   end)
   panel.tomes:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  y = y - 32
+  y = y - 24
+
+  -- Sell set pieces (opt-in) + item-level cap. The checkbox label carries the
+  -- current cap so the setting reads in words/numbers, never color alone.
+  panel.sets = MakeCheck("SellSweepCBSets",
+    "Sell set pieces (iLvl <= " .. (DB.setPieceMaxIlvl or 150) .. ")",
+    function(v) DB.sellSetPieces = v end)
+  panel.sets:SetPoint("TOPLEFT", panel, "TOPLEFT", 20, y)
+  panel.sets:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("Sell set pieces")
+    GameTooltip:AddLine("OFF (default): every set piece is kept, like uniques.\nON: a"
+      .. " set piece AT OR BELOW the iLvl cap is judged by the normal smart rules"
+      .. " (affix already learned + not an upgrade). Set gear ABOVE the cap is"
+      .. " always kept, so your tier gear stays safe. Slider sets the cap.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.sets:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  y = y - 28
+
+  panel.setilvl = CreateFrame("Slider", "SellSweepSetIlvlSlider", panel, "OptionsSliderTemplate")
+  panel.setilvl:SetWidth(176); panel.setilvl:SetHeight(15)
+  panel.setilvl:SetPoint("TOPLEFT", panel, "TOPLEFT", 26, y)
+  panel.setilvl:SetMinMaxValues(0, 285)
+  panel.setilvl:SetValueStep(5)
+  if _G["SellSweepSetIlvlSliderLow"] then _G["SellSweepSetIlvlSliderLow"]:SetText("0") end
+  if _G["SellSweepSetIlvlSliderHigh"] then _G["SellSweepSetIlvlSliderHigh"]:SetText("285") end
+  if _G["SellSweepSetIlvlSliderText"] then _G["SellSweepSetIlvlSliderText"]:SetText("") end
+  panel.setilvl:SetValue(DB.setPieceMaxIlvl or 150)
+  panel.setilvl:SetScript("OnValueChanged", function(self, val)
+    val = math.floor((val or 0) + 0.5)
+    DB.setPieceMaxIlvl = val
+    local t = _G["SellSweepCBSetsText"]
+    if t then t:SetText("Sell set pieces (iLvl <= " .. val .. ")") end
+  end)
+  y = y - 34
 
   section("ITEM RULES", y); y = y - 20
 
@@ -645,6 +691,25 @@ SlashCmdList["SELLSWEEP"] = function(line)
       .. (DB.sellLearnedTomes and " (only echoes already in your collection)"
           or " (all tomes kept)"))
     if panel then RefreshPanel() end
+  elseif cmd == "sets" then
+    DB.sellSetPieces = not DB.sellSetPieces
+    Print("Sell set pieces (iLvl <= " .. (DB.setPieceMaxIlvl or 150) .. "): "
+      .. (DB.sellSetPieces and "ON" or "OFF")
+      .. (DB.sellSetPieces and " (higher-iLvl set gear still kept)" or " (all set pieces kept)"))
+    if panel then RefreshPanel() end
+  elseif cmd == "setilvl" then
+    local n = tonumber(arg)
+    if not n then
+      Print("Usage: /sweep setilvl <number>  (current set-piece cap: "
+        .. (DB.setPieceMaxIlvl or 150) .. ")")
+      return
+    end
+    n = math.floor(n); if n < 0 then n = 0 end
+    DB.setPieceMaxIlvl = n
+    Print("Set-piece iLvl cap set to " .. n .. ". "
+      .. (DB.sellSetPieces and "Set pieces at or below this sell (smart mode)."
+          or "Enable with /sweep sets."))
+    if panel then RefreshPanel() end
   elseif cmd == "auto" then
     DB.autoSell = not DB.autoSell
     Print("Auto-sell on merchant open: " .. (DB.autoSell and "ON" or "OFF"))
@@ -703,6 +768,8 @@ SlashCmdList["SELLSWEEP"] = function(line)
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep affix - why each affixed item is kept/sold (your learned rank vs the item's)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep tomediag - dump tome diagnostics to SellSweepDB.scans.tomediag (then /reload)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep tomes - toggle: sell tomes whose echo you've already learned")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep sets - toggle: sell set pieces at/below the iLvl cap (tier gear stays kept)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /sweep setilvl <n> - set the set-piece iLvl cap (default 150)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep smart - one-off smart sweep (also sells known-affix non-upgrade greens/blues)")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep gray|white|green|blue|epic - toggle each quality")
     DEFAULT_CHAT_FRAME:AddMessage("  /sweep keep [shift-click item] - never sell it (/sweep unkeep, /sweep list)")
